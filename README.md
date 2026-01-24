@@ -9,6 +9,7 @@ Preqrequisites:
    sudo apt-get install usbutils
    ```
 - Install USB drivers https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers
+   - The installer is named something like (CP210x Windows Drivers)
 - Install usb-pid in PowerShell: https://github.com/dorssel/usbipd-win/releases
 
 Steps:
@@ -19,7 +20,7 @@ Steps:
 2. Identify your ESP32 device from the list and note its BUSID
 3. Make the ESP32 device sharable using the following command, replacing <BUSID> with the actual BUSID of your device:
    ```powershell
-   usbipd wsl bind --busid <BUSID>
+   usbipd bind --busid <BUSID>
    ```
 4. Attach the ESP32 device to WSL using the following command, replacing <BUSID> with the actual BUSID of your device:
    ```powershell

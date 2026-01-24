@@ -1,4 +1,4 @@
-set(srcs "ble_spp_server_demo.c")
+set(srcs "boot.c")
 
 if(CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND)
 list(APPEND srcs

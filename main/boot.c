@@ -20,18 +20,19 @@
 #include "esp_bt_defs.h"
 #include "esp_bt_main.h"
 #include "esp_bt_device.h"
-#include "ble_spp_server_demo.h"
+#include "boot.h"
 #include "esp_gatt_common_api.h"
 #include "esp_timer.h"
 #if (CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND)
-#include "rf_tesing_configuration_cmd.h"
+#include "rf_testing_configuration_cmd.h"
 #endif // CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND
-#define GATTS_TABLE_TAG  "GATTS_SPP_DEMO"
+#define ROBO_CAT_EARS_TAG  "ROBO_CAT_EARS_APP"
+#define GATTS_TABLE_TAG  "GATTS_SPP_SERVICE"
 
 #define SPP_PROFILE_NUM             1
 #define SPP_PROFILE_APP_IDX         0
 #define ESP_SPP_APP_ID              0x56
-#define SAMPLE_DEVICE_NAME          "ESP_SPP_SERVER"    //The Device Name Characteristics in GAP
+#define SAMPLE_DEVICE_NAME          "ROBO_CAT_EARS"    //The Device Name Characteristics in GAP
 #define SPP_SVC_INST_ID	            0
 
 /// SPP Service
@@ -717,6 +718,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
 
 void app_main(void)
 {
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Robo cat ears app starting");
     esp_err_t ret;
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
 
@@ -766,6 +768,8 @@ void app_main(void)
     if (local_mtu_ret){
         ESP_LOGE(GATTS_TABLE_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
+
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Robo cat ears app initialized");
 
     return;
 }
