@@ -17,5 +17,6 @@
     "--compile-commands-dir=/home/jeffu/personal/projects/robo-cat-ears/build"
   ],
   "idf.flashType": "UART",
-  "idf.monitorPort": "/dev/ttyACM0"
+  "idf.monitorPort": "/dev/ttyACM0",
+  "idf.currentSetup": "/home/jeffu/esp/v5.5.2/esp-idf"
 }
