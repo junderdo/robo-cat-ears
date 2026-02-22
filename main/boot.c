@@ -471,16 +471,46 @@ void init_servos(void)
 void do_animation_1(void)
 {
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 1: Happy wiggle");
-    for (int i = 0; i < 3; i++) {
-        // Move ears back
-        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80));
-        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100));
-        vTaskDelay(250 / portTICK_PERIOD_MS);
-        // Move ears forward
-        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 145));
-        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 35));
-        vTaskDelay(250 / portTICK_PERIOD_MS);
+    
+    // Start with ears up and perked
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90));
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    
+    // Quick back and forth movements with rotation
+    for (int i = 0; i < 2; i++) {
+        // Move ears back with slight outward rotation
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 85));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 95));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 75));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 105));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        
+        // Move ears forward with inward rotation
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 135));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 45));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 105));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 75));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
     }
+    
+    // Big happy wiggle
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 145));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 35));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 110));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 70));
+    vTaskDelay(300 / portTICK_PERIOD_MS);
+    
+    // Return to center with alternating movement
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90));
+    vTaskDelay(150 / portTICK_PERIOD_MS);
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90));
+    vTaskDelay(150 / portTICK_PERIOD_MS);
+    
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 1 complete");
     reset_servos();
 }
