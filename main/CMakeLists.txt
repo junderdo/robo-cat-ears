@@ -6,5 +6,5 @@ list(APPEND srcs
 endif()
 
 idf_component_register(SRCS "${srcs}"
-                    PRIV_REQUIRES bt nvs_flash esp_driver_uart console
+                    PRIV_REQUIRES bt nvs_flash esp_driver_uart console espressif__servo driver
                     INCLUDE_DIRS ".")
