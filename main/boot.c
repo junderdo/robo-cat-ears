@@ -12,7 +12,11 @@
 #include "nvs_flash.h"
 #include "esp_bt.h"
 #include "driver/uart.h"
+#include "iot_servo.h"
+#include "driver/gpio.h"
+#include "driver/rmt_tx.h"
 #include "string.h"
+#include "math.h"
 
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
@@ -22,23 +26,38 @@
 #include "boot.h"
 #include "esp_gatt_common_api.h"
 #include "esp_timer.h"
-#include "iot_servo.h"
 #if (CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND)
 #include "rf_testing_configuration_cmd.h"
 #endif // CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND
 #define ROBO_CAT_EARS_TAG "ROBO_CAT_EARS_APP"
 #define GATTS_TABLE_TAG "GATTS_SPP_SERVICE"
 
+// Servo configuration
+#define SERVO_MIN_PULSEWIDTH_US 500  // Minimum pulse width in microsecond
+#define SERVO_MAX_PULSEWIDTH_US 2500  // Maximum pulse width in microsecond
+#define SERVO_MAX_ANGLE         180    // Maximum angle (0-180 degrees)
+#define SERVO_FREQ              50     // 50Hz for standard servos
+#define SERVO_PULSE_GPIO_0        2      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_1        3      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_2        4      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_3        5      // GPIO connects to the PWM signal line
+
+// LED configuration
+#define LED_GPIO_0 6 // GPIO connects to the LED strip
+#define LED_STRIP_LED_COUNT 31 // Number of LEDs in the strip
+#define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000) // 10MHz resolution
+
+// Global LED strip variables
+static rmt_channel_handle_t led_chan = NULL;
+static rmt_encoder_handle_t led_encoder = NULL;
+static TaskHandle_t led_task_handle = NULL;
+
+// SPP configuration
 #define SPP_PROFILE_NUM 1
 #define SPP_PROFILE_APP_IDX 0
 #define ESP_SPP_APP_ID 0x56
 #define SAMPLE_DEVICE_NAME "ROBO_CAT_EARS" // The Device Name Characteristics in GAP
 #define SPP_SVC_INST_ID 0
-
-#define SERVO_CH0_PIN 0
-#define SERVO_CH1_PIN 1
-#define SERVO_CH2_PIN 2
-#define SERVO_CH3_PIN 3
 
 /// SPP Service
 static const uint16_t spp_service_uuid = 0xABF0;
@@ -250,6 +269,397 @@ static const esp_gatts_attr_db_t spp_gatt_db[SPP_IDX_NB] =
             {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&character_client_config_uuid, ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, sizeof(uint16_t), sizeof(spp_data_notify_ccc), (uint8_t *)spp_heart_beat_ccc}},
 #endif
 };
+
+// Convert HSV to RGB
+static void hsv_to_rgb(uint32_t h, uint32_t s, uint32_t v, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    h %= 360;
+    uint32_t rgb_max = v * 255 / 100;
+    uint32_t rgb_min = rgb_max * (100 - s) / 100;
+
+    uint32_t i = h / 60;
+    uint32_t diff = h % 60;
+
+    uint32_t rgb_adj = (rgb_max - rgb_min) * diff / 60;
+
+    switch (i) {
+    case 0:
+        *r = rgb_max;
+        *g = rgb_min + rgb_adj;
+        *b = rgb_min;
+        break;
+    case 1:
+        *r = rgb_max - rgb_adj;
+        *g = rgb_max;
+        *b = rgb_min;
+        break;
+    case 2:
+        *r = rgb_min;
+        *g = rgb_max;
+        *b = rgb_min + rgb_adj;
+        break;
+    case 3:
+        *r = rgb_min;
+        *g = rgb_max - rgb_adj;
+        *b = rgb_max;
+        break;
+    case 4:
+        *r = rgb_min + rgb_adj;
+        *g = rgb_min;
+        *b = rgb_max;
+        break;
+    default:
+        *r = rgb_max;
+        *g = rgb_min;
+        *b = rgb_max - rgb_adj;
+        break;
+    }
+}
+
+// LED rainbow task
+static void led_rainbow_task(void *pvParameters)
+{
+    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
+    uint32_t offset = 0;
+    
+    // Highly saturated color palette: blue, hot pink, purple
+    typedef struct {
+        uint8_t r, g, b;
+    } rgb_color_t;
+    
+    rgb_color_t palette[] = {
+        {0, 150, 255},    // Pure saturated blue
+        {255, 0, 180},    // Highly saturated hot pink
+        {180, 0, 255}     // Highly saturated purple
+    };
+    const int palette_size = 3;
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "LED color scroll effect task started");
+    
+    while (1) {
+        // Generate color pattern
+        for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+            // Calculate position in the color cycle (0-2999 range)
+            uint32_t pos = (offset + (i * 3000 / LED_STRIP_LED_COUNT)) % 3000;
+            
+            // Determine which color we're in
+            int color_idx = pos / 1000;  // 0, 1, or 2
+            int next_idx = (color_idx + 1) % palette_size;
+            
+            // Calculate position within this color section (0-999)
+            uint32_t section_pos = pos % 1000;
+            
+            uint8_t r, g, b;
+            
+            // Only blend in the last 15% of each color section for sharper transitions
+            if (section_pos < 850) {
+                // Solid color - no blending
+                r = palette[color_idx].r;
+                g = palette[color_idx].g;
+                b = palette[color_idx].b;
+            } else {
+                // Blend zone - quick transition to next color
+                uint32_t blend = ((section_pos - 850) * 255) / 150;
+                r = (palette[color_idx].r * (255 - blend) + palette[next_idx].r * blend) / 255;
+                g = (palette[color_idx].g * (255 - blend) + palette[next_idx].g * blend) / 255;
+                b = (palette[color_idx].b * (255 - blend) + palette[next_idx].b * blend) / 255;
+            }
+            
+            // Dim to 20% brightness
+            r = r / 5;
+            g = g / 5;
+            b = b / 5;
+            
+            // WS2812 uses GRB format
+            led_strip_pixels[i * 3 + 0] = g;
+            led_strip_pixels[i * 3 + 1] = r;
+            led_strip_pixels[i * 3 + 2] = b;
+        }
+        
+        // Send data to LED strip
+        rmt_transmit_config_t tx_config = {
+            .loop_count = 0,
+        };
+        
+        ESP_ERROR_CHECK(rmt_transmit(led_chan, led_encoder, led_strip_pixels, sizeof(led_strip_pixels), &tx_config));
+        ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, portMAX_DELAY));
+        
+        // Increment offset for scrolling effect
+        offset = (offset + 50) % 3000;
+        
+        vTaskDelay(pdMS_TO_TICKS(50)); // Update every 50ms
+    }
+}
+
+void init_leds(void) 
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing LED strip on GPIO %d with %d LEDs", LED_GPIO_0, LED_STRIP_LED_COUNT);
+    
+    // Configure RMT TX channel
+    rmt_tx_channel_config_t tx_chan_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .gpio_num = LED_GPIO_0,
+        .mem_block_symbols = 64,
+        .resolution_hz = LED_STRIP_RMT_RES_HZ,
+        .trans_queue_depth = 4,
+    };
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &led_chan));
+    
+    // Configure bytes encoder for WS2812
+    // WS2812 timing: T0H=350ns, T1H=900ns, T0L=900ns, T1L=350ns (total 1.25us per bit)
+    rmt_bytes_encoder_config_t bytes_encoder_config = {
+        .bit0 = {
+            .level0 = 1,
+            .duration0 = 0.35 * LED_STRIP_RMT_RES_HZ / 1000000, // 350ns
+            .level1 = 0,
+            .duration1 = 0.9 * LED_STRIP_RMT_RES_HZ / 1000000, // 900ns
+        },
+        .bit1 = {
+            .level0 = 1,
+            .duration0 = 0.9 * LED_STRIP_RMT_RES_HZ / 1000000, // 900ns
+            .level1 = 0,
+            .duration1 = 0.35 * LED_STRIP_RMT_RES_HZ / 1000000, // 350ns
+        },
+        .flags.msb_first = 1,
+    };
+    ESP_ERROR_CHECK(rmt_new_bytes_encoder(&bytes_encoder_config, &led_encoder));
+    
+    // Enable RMT channel
+    ESP_ERROR_CHECK(rmt_enable(led_chan));
+    
+    // Create rainbow task
+    xTaskCreate(led_rainbow_task, "led_rainbow_task", 2048, NULL, 5, &led_task_handle);
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "LED strip initialized with scrolling pastel effect");
+}
+
+void reset_servos(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Resetting servos to center position (90 degrees)");
+    for (int i = 0; i < 4; i++)
+    {
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, i, 90.0));
+    }
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Servos reset to center position");
+}
+
+void init_servos(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing 4 servos on GPIO 2-5");
+    
+    // Configure 4 servos
+    servo_config_t servo_cfg = {
+        .max_angle = SERVO_MAX_ANGLE,
+        .min_width_us = SERVO_MIN_PULSEWIDTH_US,
+        .max_width_us = SERVO_MAX_PULSEWIDTH_US,
+        .freq = SERVO_FREQ,
+        .timer_number = LEDC_TIMER_0,
+        .channels = {
+            .servo_pin = {SERVO_PULSE_GPIO_0, SERVO_PULSE_GPIO_1, SERVO_PULSE_GPIO_2, SERVO_PULSE_GPIO_3},
+            .ch = {LEDC_CHANNEL_0, LEDC_CHANNEL_1, LEDC_CHANNEL_2, LEDC_CHANNEL_3},
+        },
+        .channel_number = 4,
+    };
+    
+    // Initialize servos
+    ESP_ERROR_CHECK(iot_servo_init(LEDC_LOW_SPEED_MODE, &servo_cfg));
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "All 4 servos initialized at center position (90 degrees)");
+    // Reset servos to center position
+    reset_servos();
+}
+
+void do_animation_1(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 1: Happy wiggle");
+    
+    // Start with ears up and perked
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90));
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    
+    // Quick back and forth movements with rotation
+    for (int i = 0; i < 2; i++) {
+        // Move ears back with slight outward rotation
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 85));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 95));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 75));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 105));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        
+        // Move ears forward with inward rotation
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 135));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 45));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 105));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 75));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+    }
+    
+    // Big happy wiggle
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 145));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 35));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 110));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 70));
+    vTaskDelay(300 / portTICK_PERIOD_MS);
+    
+    // Return to center with alternating movement
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90));
+    vTaskDelay(150 / portTICK_PERIOD_MS);
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100));
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90));
+    vTaskDelay(150 / portTICK_PERIOD_MS);
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 1 complete");
+    reset_servos();
+}
+
+void do_animation_2(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 2: Sad");
+    for (int i = 0; i < 3; i++) {
+        // move ears forward/down
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 145));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 35));
+        // rotate outward
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 30));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 150));
+        
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 2 complete");
+    reset_servos();
+}
+
+void do_animation_3(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 3: Playful bounce");
+    // Very rapid playful movements - extended version
+    for (int i = 0; i < 8; i++) {
+        // Quick bouncy positions
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80 + (i % 4) * 12));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100 - (i % 4) * 12));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90 + ((i % 2) * 25 - 12)));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90 + ((i % 2) * 25 - 12)));
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+    
+    // Medium bounces
+    for (int i = 0; i < 3; i++) {
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 95));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 85));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 105));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 75));
+        vTaskDelay(180 / portTICK_PERIOD_MS);
+        
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 125));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 55));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 75));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 105));
+        vTaskDelay(180 / portTICK_PERIOD_MS);
+    }
+    
+    // Final rapid flutter
+    for (int i = 0; i < 4; i++) {
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 85 + (i % 2) * 20));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 95 - (i % 2) * 20));
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 3 complete");
+    reset_servos();
+}
+
+void do_animation_4(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 4: Curious tilt");
+    // Alternate ears - one up, one down
+    for (int i = 0; i < 3; i++) {
+        // Left ear down, right ear up
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 130)); // Left ear down
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 80)); // Right ear up
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 100)); // Slight tilt
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 80)); // Slight tilt
+        vTaskDelay(600 / portTICK_PERIOD_MS);
+        
+        // Right ear down, left ear up
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 85)); // Left ear up
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 60)); // Right ear down
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 80)); // Slight tilt
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 100)); // Slight tilt
+        vTaskDelay(600 / portTICK_PERIOD_MS);
+    }
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 4 complete");
+    reset_servos();
+}
+
+void do_animation_5(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 5: Listening/Radar");
+    // Ears rotate side to side like listening/scanning
+    for (int i = 0; i < 2; i++) {
+        // Rotate both ears outward
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 60)); // Right ear rotate out
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 120)); // Left ear rotate out
+        vTaskDelay(400 / portTICK_PERIOD_MS);
+        
+        // Rotate both ears inward
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 120)); // Right ear rotate in
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 60)); // Left ear rotate in
+        vTaskDelay(400 / portTICK_PERIOD_MS);
+        
+        // Back to center
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+    }
+    
+    // Independent rotation - one ear tracks left, other right
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 60)); // Right ear left
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 60)); // Left ear left
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 120)); // Right ear right
+    ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 120)); // Left ear right
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 5 complete");
+    reset_servos();
+}
+
+void do_animation_6(void)
+{
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Starting animation 6: Excited twitch");
+    // Rapid excited movements
+    for (int i = 0; i < 6; i++) {
+        // Quick twitch positions
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 80 + (i % 3) * 15));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 100 - (i % 3) * 15));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 90 + ((i % 2) * 20 - 10)));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 90 + ((i % 2) * 20 - 10)));
+        vTaskDelay(120 / portTICK_PERIOD_MS);
+    }
+    
+    // Big excited wiggle
+    for (int i = 0; i < 2; i++) {
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 100));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 80));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 110));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 70));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 1, 130));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 3, 50));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 70));
+        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 2, 110));
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+    }
+    
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Animation 6 complete");
+    reset_servos();
+}
 
 static uint8_t find_char_and_desr_index(uint16_t handle)
 {
@@ -597,10 +1007,32 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         if (strcmp((char *)param->write.value, "DA1") == 0)
         {
             ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 1");
+            do_animation_1();
         }
         else if (strcmp((char *)param->write.value, "DA2") == 0)
         {
             ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 2");
+            do_animation_2();
+        }
+        else if (strcmp((char *)param->write.value, "DA3") == 0)
+        {
+            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 3");
+            do_animation_3();
+        }
+        else if (strcmp((char *)param->write.value, "DA4") == 0)
+        {
+            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 4");
+            do_animation_4();
+        }
+        else if (strcmp((char *)param->write.value, "DA5") == 0)
+        {
+            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 5");
+            do_animation_5();
+        }
+        else if (strcmp((char *)param->write.value, "DA6") == 0)
+        {
+            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 6");
+            do_animation_6();
         }
 
         // TODO: enable larger data input using prepared writes, and handle them in execute write event
@@ -785,44 +1217,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     } while (0);
 }
 
-void init_servos(void)
-{
-    servo_config_t servo_cfg = {
-        .max_angle = 180,
-        .min_width_us = 500,
-        .max_width_us = 2500,
-        .freq = 50,
-        .timer_number = LEDC_TIMER_0,
-        .channels = {
-            .servo_pin = {
-                SERVO_CH0_PIN,
-                SERVO_CH1_PIN,
-                SERVO_CH2_PIN,
-                SERVO_CH3_PIN,
-            },
-            .ch = {
-                LEDC_CHANNEL_0,
-                LEDC_CHANNEL_1,
-                LEDC_CHANNEL_2,
-                LEDC_CHANNEL_3,
-            },
-        },
-        .channel_number = 4,
-    };
-    iot_servo_init(LEDC_LOW_SPEED_MODE, &servo_cfg);
-
-    float angle = 100.0f;
-
-    // Set angle to 100 degree
-    iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, angle);
-
-    // Get current angle of servo
-    iot_servo_read_angle(LEDC_LOW_SPEED_MODE, 0, &angle);
-
-    // deinit servo
-    iot_servo_deinit(LEDC_LOW_SPEED_MODE);
-}
-
 void app_main(void)
 {
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Robo cat ears app starting");
@@ -882,9 +1276,14 @@ void app_main(void)
         ESP_LOGE(GATTS_TABLE_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
 
-    ESP_LOGI(ROBO_CAT_EARS_TAG, "Initialize servos");
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing LEDS");
+    init_leds();
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "LEDS initialized");
+
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing servos");
     init_servos();
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Servos initialized");
+    do_animation_1();
 
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Robo cat ears app initialized");
 
