@@ -1,1 +1,5 @@
-build/*
+# build artifacts
+build/
+
+# esp idf managed component dependencies
+managed_components/
