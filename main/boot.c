@@ -1,7 +1,8 @@
 /*
- * Description main boot and initialization code for robo cat ears
- * Author: Jeff Underdown (gh: junderdo - jeff.underdown@gmail.com -- jeff@milklabcreations.com)
- * Copyright (c) 2026 Milk Lab Creations. All rights reserved.
+ * Description: Main boot and initialization function for robo cat ears
+ * Author: Jeff Underdown (junderdo)
+ * Company: Milk Lab Creations
+ * SPDX-License-Identifier: GPL-3.0
  */
 
 #include "freertos/FreeRTOS.h"
