@@ -1,7 +1,7 @@
 /*
  * Description LED controller header for robo cat ears
  * Author: Jeff Underdown (junderdo)
- * Company: Milk Lab Creations
+ * Copyright (C) 2026 Milk Lab Creations
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
