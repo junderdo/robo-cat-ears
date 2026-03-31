@@ -2,7 +2,7 @@
  * Description: Bluetooth Low Energy (BLE) server implementation for robo cat ears
  * Author: Jeff Underdown (junderdo)
  * Company: Milk Lab Creations
- * SPDX-License-Identifier: GPL-3.0
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #ifndef BLE_H
