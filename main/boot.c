@@ -33,17 +33,20 @@ void app_main(void)
 
     // Initialize BLE
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing BLE");
-    ESP_ERROR_CHECK(init_ble());
+    ESP_ERROR_CHECK(
+        init_ble());
     ESP_LOGI(ROBO_CAT_EARS_TAG, "BLE initialized");
 
     // Initialize LEDs
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing LEDs");
-    init_leds();
+    ESP_ERROR_CHECK(
+        init_leds());
     ESP_LOGI(ROBO_CAT_EARS_TAG, "LEDs initialized");
 
     // Initialize servos
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing servos");
-    init_servos();
+    ESP_ERROR_CHECK(
+        init_servos());
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Servos initialized");
     do_animation_1();
 

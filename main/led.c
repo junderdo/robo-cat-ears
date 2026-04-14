@@ -140,7 +140,7 @@ static void led_rainbow_task(void *pvParameters)
     }
 }
 
-void init_leds(void) 
+esp_err_t init_leds(void) 
 {
     ESP_LOGI(LED_TAG, "Initializing LED strip on GPIO %d with %d LEDs", LED_GPIO_0, LED_STRIP_LED_COUNT);
     
@@ -152,7 +152,11 @@ void init_leds(void)
         .resolution_hz = LED_STRIP_RMT_RES_HZ,
         .trans_queue_depth = 4,
     };
-    ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &led_chan));
+    esp_err_t err = rmt_new_tx_channel(&tx_chan_config, &led_chan);
+    if (err) {
+        ESP_LOGE(LED_TAG, "Failed to create RMT TX channel: %s", esp_err_to_name(err));
+        return err;
+    }
     
     // Configure bytes encoder for WS2812
     // WS2812 timing: T0H=350ns, T1H=900ns, T0L=900ns, T1L=350ns (total 1.25us per bit)
@@ -171,13 +175,22 @@ void init_leds(void)
         },
         .flags.msb_first = 1,
     };
-    ESP_ERROR_CHECK(rmt_new_bytes_encoder(&bytes_encoder_config, &led_encoder));
+    err = rmt_new_bytes_encoder(&bytes_encoder_config, &led_encoder);
+    if (err) {
+        ESP_LOGE(LED_TAG, "Failed to create RMT bytes encoder: %s", esp_err_to_name(err));
+        return err;
+    }
     
     // Enable RMT channel
-    ESP_ERROR_CHECK(rmt_enable(led_chan));
+    err = rmt_enable(led_chan);
+    if (err) {
+        ESP_LOGE(LED_TAG, "Failed to enable RMT channel: %s", esp_err_to_name(err));
+        return err;
+    }
     
     // Create rainbow task
     xTaskCreate(led_rainbow_task, "led_rainbow_task", 2048, NULL, 5, &led_task_handle);
     
     ESP_LOGI(LED_TAG, "LED strip initialized with scrolling pastel effect");
+    return ESP_OK;
 }

@@ -13,17 +13,23 @@
 
 #define SERVO_TAG "SERVO"
 
-void reset_servos(void)
+esp_err_t reset_servos(void)
 {
     ESP_LOGI(SERVO_TAG, "Resetting servos to center position (90 degrees)");
+    esp_err_t err = ESP_OK;
     for (int i = 0; i < 4; i++)
     {
-        ESP_ERROR_CHECK(iot_servo_write_angle(LEDC_LOW_SPEED_MODE, i, 90.0));
+        err = iot_servo_write_angle(LEDC_LOW_SPEED_MODE, i, 90.0);
+        if (err) {
+            ESP_LOGE(SERVO_TAG, "Failed to reset servo %d: %s", i, esp_err_to_name(err));
+            return err;
+        }
     }
     ESP_LOGI(SERVO_TAG, "Servos reset to center position");
+    return err;
 }
 
-void init_servos(void)
+esp_err_t init_servos(void)
 {
     ESP_LOGI(SERVO_TAG, "Initializing 4 servos on GPIO 2-5");
     
@@ -42,11 +48,18 @@ void init_servos(void)
     };
     
     // Initialize servos
-    ESP_ERROR_CHECK(iot_servo_init(LEDC_LOW_SPEED_MODE, &servo_cfg));
+    esp_err_t err = iot_servo_init(LEDC_LOW_SPEED_MODE, &servo_cfg);
+    if (err) {
+        ESP_LOGE(SERVO_TAG, "Failed to initialize servos: %s", esp_err_to_name(err));
+        return err;
+    }
     ESP_LOGI(SERVO_TAG, "All 4 servos initialized at center position (90 degrees)");
     // Reset servos to center position
-    reset_servos();
+    return reset_servos();
 }
+
+// TODO: Implement general animation function that can take in parameter for different patterns instead of hardcoding each one
+// return esp_err_t such that errors can be propagated and handled in the main app instead of just logging and continuing
 
 void do_animation_1(void)
 {
@@ -92,7 +105,7 @@ void do_animation_1(void)
     vTaskDelay(150 / portTICK_PERIOD_MS);
     
     ESP_LOGI(SERVO_TAG, "Animation 1 complete");
-    reset_servos();
+    ESP_ERROR_CHECK(reset_servos());
 }
 
 void do_animation_2(void)
@@ -109,7 +122,7 @@ void do_animation_2(void)
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
     ESP_LOGI(SERVO_TAG, "Animation 2 complete");
-    reset_servos();
+    ESP_ERROR_CHECK(reset_servos());
 }
 
 void do_animation_3(void)
@@ -148,7 +161,7 @@ void do_animation_3(void)
     }
     
     ESP_LOGI(SERVO_TAG, "Animation 3 complete");
-    reset_servos();
+    ESP_ERROR_CHECK(reset_servos());
 }
 
 void do_animation_4(void)
@@ -172,7 +185,7 @@ void do_animation_4(void)
     }
     
     ESP_LOGI(SERVO_TAG, "Animation 4 complete");
-    reset_servos();
+    ESP_ERROR_CHECK(reset_servos());
 }
 
 void do_animation_5(void)
@@ -206,7 +219,7 @@ void do_animation_5(void)
     vTaskDelay(500 / portTICK_PERIOD_MS);
     
     ESP_LOGI(SERVO_TAG, "Animation 5 complete");
-    reset_servos();
+    ESP_ERROR_CHECK(reset_servos());
 }
 
 void do_animation_6(void)
@@ -238,5 +251,5 @@ void do_animation_6(void)
     }
     
     ESP_LOGI(SERVO_TAG, "Animation 6 complete");
-    reset_servos();
+    ESP_ERROR_CHECK(reset_servos());
 }

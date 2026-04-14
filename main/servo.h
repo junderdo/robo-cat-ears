@@ -5,6 +5,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <esp_err.h>
+
 #ifndef SERVO_H
 #define SERVO_H
 
@@ -23,12 +25,12 @@
  * 
  * Configures 4 servos on GPIO pins 2-5 and resets them to center position
  */
-void init_servos(void);
+esp_err_t init_servos(void);
 
 /**
  * @brief Reset all servos to center position (90 degrees)
  */
-void reset_servos(void);
+esp_err_t reset_servos(void);
 
 /**
  * @brief Animation 1: Happy wiggle

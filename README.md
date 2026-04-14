@@ -32,7 +32,7 @@ Steps:
    lsusb
    ```
 6. You should see your ESP32 device listed (e.g., Bus 001 Device 002: ID 303a:1001 Espressif USB JTAG/serial debug unit). You can now use this device path in your ESP-IDF commands to flash and monitor your ESP32 device.
-7. Set your ESP-IDF serial port at the bottom of your VSCode window eg. /dev/ttyACM0
+7. Set your ESP-IDF serial port at the bottom of your VSCode window eg. /dev/ttyACM0 -- The rest of this guide will use /dev/ttyACM0 as the serial port it may be different on your system
 8. Make sure your serial port permissions are set correctly. Replace the example port with your actual port if different:
    ```bash
    sudo chmod 0666 /dev/ttyACM0
@@ -66,21 +66,18 @@ This project uses the GAP protocol [https://docs.espressif.com/projects/esp-idf/
    uuid: string (uuid v4),
    keyframes: [
       {
-         time: number (time in ms),
+         timestamp: number (time in ms),
          easing: EasingEnum,
          left: {
-            position: {
-               azi: number (degrees +/- from center),
-               lat: number (degrees +/- from center)
-            }
+            azi: number (degrees +/- from center),
+            lat: number (degrees +/- from center)
          },
          right: {
-            position: {
-               azi: number (degrees +/- from center),
-               lat: number (degrees +/- from center)
-            }
+            azi: number (degrees +/- from center),
+            lat: number (degrees +/- from center)
          }
-      }
+      },
+      ...
    ]
 }
 ```

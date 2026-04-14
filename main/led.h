@@ -9,6 +9,7 @@
 #define LED_H
 
 #include <stdint.h>
+#include <esp_err.h>    
 
 // LED configuration
 #define LED_GPIO_0 6 // GPIO connects to the LED strip
@@ -20,6 +21,6 @@
  * 
  * Configures the RMT peripheral and starts the LED animation task
  */
-void init_leds(void);
+esp_err_t init_leds(void);
 
 #endif // LED_H
