@@ -23,6 +23,7 @@
 #include "esp_gatt_common_api.h"
 #include "boot.h"
 #include "servo.h"
+#include "controller.h"
 
 #if (CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND)
 #include "rf_testing_configuration_cmd.h"
@@ -584,47 +585,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         esp_ble_gatts_create_attr_tab(spp_gatt_db, gatts_if, SPP_IDX_NB, SPP_SVC_INST_ID);
         break;
     case ESP_GATTS_READ_EVT:
-        ESP_LOGI(GATTS_TABLE_TAG, "Characteristic read");
+        controller_handle_read(param);
         break;
     case ESP_GATTS_WRITE_EVT:
-    {
-        ESP_LOGI(GATTS_TABLE_TAG, "Characteristic write, conn_id %d, handle %d", param->write.conn_id, param->write.handle);
-        ESP_LOGI(GATTS_TABLE_TAG, "Data: %.*s", param->write.len, param->write.value);
-
-        if (strcmp((char *)param->write.value, "DA1") == 0)
-        {
-            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 1");
-            do_animation_1();
-        }
-        else if (strcmp((char *)param->write.value, "DA2") == 0)
-        {
-            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 2");
-            do_animation_2();
-        }
-        else if (strcmp((char *)param->write.value, "DA3") == 0)
-        {
-            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 3");
-            do_animation_3();
-        }
-        else if (strcmp((char *)param->write.value, "DA4") == 0)
-        {
-            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 4");
-            do_animation_4();
-        }
-        else if (strcmp((char *)param->write.value, "DA5") == 0)
-        {
-            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 5");
-            do_animation_5();
-        }
-        else if (strcmp((char *)param->write.value, "DA6") == 0)
-        {
-            ESP_LOGI(GATTS_TABLE_TAG, "Doing Animation 6");
-            do_animation_6();
-        }
-
-        // TODO: enable larger data input using prepared writes, and handle them in execute write event
+        controller_handle_write(param);
         break;
-    }
     case ESP_GATTS_EXEC_WRITE_EVT:
     {
         ESP_LOGI(GATTS_TABLE_TAG, "Execute write");
@@ -664,6 +629,15 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         spp_gatts_if = gatts_if;
         is_connected = true;
         memcpy(&spp_remote_bda, &p_data->connect.remote_bda, sizeof(esp_bd_addr_t));
+        
+        // Set MTU to 512 bytes upon connection
+        esp_err_t mtu_ret = esp_ble_gatt_set_local_mtu(512);
+        if (mtu_ret) {
+            ESP_LOGE(GATTS_TABLE_TAG, "Set local MTU failed, error code = %x", mtu_ret);
+        } else {
+            ESP_LOGI(GATTS_TABLE_TAG, "MTU set to 512 bytes");
+        }
+        
 #ifdef SUPPORT_HEARTBEAT
         uint16_t cmd = 0;
         xQueueSend(cmd_heartbeat_queue, &cmd, 10 / portTICK_PERIOD_MS);
