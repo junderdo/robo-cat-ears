@@ -8,6 +8,7 @@
 #include "led.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "driver/rmt_tx.h"
 #include "nvs_flash.h"
@@ -25,6 +26,7 @@ static rmt_channel_handle_t led_chan = NULL;
 static rmt_encoder_handle_t led_encoder = NULL;
 static TaskHandle_t led_task_handle = NULL;
 static volatile bool led_task_should_stop = false;
+static SemaphoreHandle_t led_task_mutex = NULL;
 
 // Helper function to send LED data
 static esp_err_t led_send_data(const uint8_t *led_strip_pixels, size_t length)
@@ -43,22 +45,41 @@ static esp_err_t led_send_data(const uint8_t *led_strip_pixels, size_t length)
 
 void led_stop_current_task(void)
 {
-    if (led_task_handle != NULL) {
+    TaskHandle_t task_to_stop = NULL;
+    
+    // Get the task handle under mutex protection
+    if (xSemaphoreTake(led_task_mutex, portMAX_DELAY) == pdTRUE) {
+        task_to_stop = led_task_handle;
+        xSemaphoreGive(led_task_mutex);
+    }
+    
+    if (task_to_stop != NULL) {
         ESP_LOGI(LED_TAG, "Signaling LED task to stop");
         
         // Signal the task to stop
         led_task_should_stop = true;
         
         // Wait for the task to actually exit (max 1 second)
-        for (int i = 0; i < 100 && led_task_handle != NULL; i++) {
+        // Check if task still exists using FreeRTOS API
+        for (int i = 0; i < 100; i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
+            
+            // Check if task still exists
+            if (eTaskGetState(task_to_stop) == eDeleted) {
+                break;
+            }
         }
         
-        // If task still hasn't exited, force delete it as a last resort
-        if (led_task_handle != NULL) {
+        // If task still exists, force delete it as a last resort
+        if (eTaskGetState(task_to_stop) != eDeleted) {
             ESP_LOGW(LED_TAG, "Task didn't exit gracefully, forcing deletion");
-            vTaskDelete(led_task_handle);
+            vTaskDelete(task_to_stop);
+        }
+        
+        // Clear the handle under mutex protection
+        if (xSemaphoreTake(led_task_mutex, portMAX_DELAY) == pdTRUE) {
             led_task_handle = NULL;
+            xSemaphoreGive(led_task_mutex);
         }
         
         ESP_LOGI(LED_TAG, "LED task stopped");
@@ -183,6 +204,8 @@ esp_err_t led_start_task(lighting_task_func_t task_func, const char *task_name, 
     // Copy lighting data
     memcpy(lighting_param, lighting, sizeof(lighting_data_t));
     
+    TaskHandle_t new_task_handle = NULL;
+    
     // Create the task
     BaseType_t ret = xTaskCreate(
         task_func,
@@ -190,13 +213,19 @@ esp_err_t led_start_task(lighting_task_func_t task_func, const char *task_name, 
         4096,  // Stack size
         lighting_param,
         5,     // Priority
-        &led_task_handle
+        &new_task_handle
     );
     
     if (ret != pdPASS) {
         ESP_LOGE(LED_TAG, "Failed to create LED task: %s", task_name);
         free(lighting_param);
         return ESP_FAIL;
+    }
+    
+    // Set the task handle under mutex protection
+    if (xSemaphoreTake(led_task_mutex, portMAX_DELAY) == pdTRUE) {
+        led_task_handle = new_task_handle;
+        xSemaphoreGive(led_task_mutex);
     }
     
     ESP_LOGI(LED_TAG, "Started LED task: %s", task_name);
@@ -216,7 +245,6 @@ void led_solid_task(void *params)
         memset(led_strip_pixels, 0, sizeof(led_strip_pixels));
         led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
         free(lighting);
-        led_task_handle = NULL;
         vTaskDelete(NULL);
         return;
     }
@@ -236,7 +264,6 @@ void led_solid_task(void *params)
     
     ESP_LOGI(LED_TAG, "Solid color applied, task exiting");
     free(lighting);
-    led_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -253,26 +280,32 @@ void led_breathing_task(void *params)
     
     if (lighting->color_count == 0) {
         free(lighting);
-        led_task_handle = NULL;
         vTaskDelete(NULL);
         return;
     }
     
     // Calculate delay based on speed (1-100, higher is faster)
-    uint32_t delay_ms = 10 + ((100 - lighting->speed) * 2);
+    // Minimum 15ms to ensure WS2812 LEDs can handle the update rate
+    // Range: 15ms (speed=100) to 510ms (speed=1)
+    uint32_t delay_ms = 15 + ((100 - lighting->speed) * 5);
+    
+    // Adjust brightness step based on speed to maintain smooth animation
+    uint32_t brightness_step = 1 + (lighting->speed / 50);  // 1-3 based on speed
     
     while (!led_task_should_stop) {
         // Update brightness
         if (increasing) {
-            brightness += 2;
+            brightness += brightness_step;
             if (brightness >= 255) {
                 brightness = 255;
                 increasing = false;
             }
         } else {
-            brightness -= 2;
-            if (brightness == 0) {
+            if (brightness <= brightness_step) {
+                brightness = 0;
                 increasing = true;
+            } else {
+                brightness -= brightness_step;
             }
         }
         
@@ -297,7 +330,6 @@ void led_breathing_task(void *params)
     
     ESP_LOGI(LED_TAG, "Breathing task exiting gracefully");
     free(lighting);
-    led_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -313,14 +345,16 @@ void led_marquee_task(void *params)
     
     if (lighting->color_count == 0) {
         free(lighting);
-        led_task_handle = NULL;
         vTaskDelete(NULL);
         return;
     }
     
     // Calculate delay and step based on speed (1-100, higher is faster)
-    uint32_t delay_ms = 10 + ((100 - lighting->speed) * 2);
-    uint32_t step = 1 + (lighting->speed / 20);
+    // Quadratic curve: faster at low speeds, more gradual at high speeds
+    // Range: 5ms (speed=100) to ~25ms (speed=1)
+    uint32_t speed_diff = 100 - lighting->speed;
+    uint32_t delay_ms = 5 + (speed_diff / 3);
+    uint32_t step = 5;  // Constant step for consistent motion
     
     const int total_range = lighting->color_count * 1000;
     
@@ -364,7 +398,6 @@ void led_marquee_task(void *params)
     
     ESP_LOGI(LED_TAG, "Marquee task exiting gracefully");
     free(lighting);
-    led_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -385,7 +418,8 @@ void led_chasing_task(void *params)
     }
     
     // Calculate delay based on speed (1-100, higher is faster)
-    uint32_t delay_ms = 20 + ((100 - lighting->speed) * 3);
+    // Faster overall: 10ms (speed=100) to 210ms (speed=1)
+    uint32_t delay_ms = 10 + ((100 - lighting->speed) * 2);
     const int chase_length = 5; // Number of LEDs in the chase pattern
     
     while (!led_task_should_stop) {
@@ -418,7 +452,6 @@ void led_chasing_task(void *params)
     
     ESP_LOGI(LED_TAG, "Chasing task exiting gracefully");
     free(lighting);
-    led_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -438,7 +471,8 @@ void led_rain_task(void *params)
     }
     
     // Calculate delay based on speed (1-100, higher is faster)
-    uint32_t delay_ms = 30 + ((100 - lighting->speed) * 5);
+    // Faster overall: 15ms (speed=100) to 315ms (speed=1)
+    uint32_t delay_ms = 15 + ((100 - lighting->speed) * 3);
     
     // Random drop positions and colors
     typedef struct {
@@ -495,7 +529,6 @@ void led_rain_task(void *params)
     
     ESP_LOGI(LED_TAG, "Rain task exiting gracefully");
     free(lighting);
-    led_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -548,6 +581,15 @@ static void hsv_to_rgb(uint32_t h, uint32_t s, uint32_t v, uint8_t *r, uint8_t *
 esp_err_t init_leds(void) 
 {
     ESP_LOGI(LED_TAG, "Initializing LED strip on GPIO %d with %d LEDs", LED_GPIO_0, LED_STRIP_LED_COUNT);
+    
+    // Create mutex for task handle synchronization
+    if (led_task_mutex == NULL) {
+        led_task_mutex = xSemaphoreCreateMutex();
+        if (led_task_mutex == NULL) {
+            ESP_LOGE(LED_TAG, "Failed to create mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
     
     // Configure RMT TX channel
     rmt_tx_channel_config_t tx_chan_config = {

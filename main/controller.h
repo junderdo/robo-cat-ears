@@ -15,9 +15,10 @@
  * 
  * Processes read requests from BLE clients
  * 
+ * @param gatts_if GATT server interface
  * @param param Pointer to the GATT callback parameter containing read event data
  */
-void controller_handle_read(esp_ble_gatts_cb_param_t *param);
+void controller_handle_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
 /**
  * @brief Handle BLE GATT write events
@@ -28,5 +29,13 @@ void controller_handle_read(esp_ble_gatts_cb_param_t *param);
  * @param param Pointer to the GATT callback parameter containing write event data
  */
 void controller_handle_write(esp_ble_gatts_cb_param_t *param);
+
+/**
+ * @brief Update the BLE characteristic with current lighting data
+ * 
+ * This should be called whenever lighting configuration changes to ensure
+ * the BLE characteristic reflects the current state.
+ */
+void controller_update_lighting_characteristic(void);
 
 #endif // CONTROLLER_H

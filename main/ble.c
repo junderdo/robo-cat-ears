@@ -169,7 +169,7 @@ static const uint8_t spp_data_receive_val[20] = {0x00};
 
 /// SPP Service - data notify characteristic, notify&read
 static const uint16_t spp_data_notify_uuid = ESP_GATT_UUID_SPP_DATA_NOTIFY;
-static const uint8_t spp_data_notify_val[20] = {0x00};
+static uint8_t spp_data_notify_val[SPP_DATA_MAX_LEN] = {0x00};  // Non-const, full size for lighting data
 static const uint8_t spp_data_notify_ccc[2] = {0x00, 0x00};
 
 /// SPP Service - command characteristic, read&write without response
@@ -209,7 +209,7 @@ static const esp_gatts_attr_db_t spp_gatt_db[SPP_IDX_NB] =
 
         // SPP -  data notify characteristic Value
         [SPP_IDX_SPP_DATA_NTY_VAL] =
-            {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&spp_data_notify_uuid, ESP_GATT_PERM_READ, SPP_DATA_MAX_LEN, sizeof(spp_data_notify_val), (uint8_t *)spp_data_notify_val}},
+            {{ESP_GATT_RSP_BY_APP}, {ESP_UUID_LEN_16, (uint8_t *)&spp_data_notify_uuid, ESP_GATT_PERM_READ, SPP_DATA_MAX_LEN, sizeof(spp_data_notify_val), (uint8_t *)spp_data_notify_val}},
 
         // SPP -  data notify characteristic - Client Characteristic Configuration Descriptor
         [SPP_IDX_SPP_DATA_NTF_CFG] =
@@ -433,7 +433,7 @@ void uart_task(void *pvParameters)
                                 memcpy(ntf_value_p + 4, temp + (current_num - 1) * (spp_mtu_size - 7), (event.size - (current_num - 1) * (spp_mtu_size - 7)));
                                 esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], (event.size - (current_num - 1) * (spp_mtu_size - 7) + 4), ntf_value_p, false);
                             }
-                            vTaskDelay(20 / portTICK_PERIOD_MS);
+                            vTaskDelay(50 / portTICK_PERIOD_MS);
                             current_num++;
                         }
                         free(ntf_value_p);
@@ -561,11 +561,15 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         ESP_LOGI(GATTS_TABLE_TAG, "Advertising stop successfully");
         break;
     case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
-        ESP_LOGI(GATTS_TABLE_TAG, "Connection params update, status %d, conn_int %d, latency %d, timeout %d",
+        ESP_LOGI(GATTS_TABLE_TAG, "Connection params update, status %d, conn_int %d (%.1fms), latency %d, timeout %d",
                  param->update_conn_params.status,
                  param->update_conn_params.conn_int,
+                 param->update_conn_params.conn_int * 1.25f,
                  param->update_conn_params.latency,
                  param->update_conn_params.timeout);
+        if (param->update_conn_params.status != ESP_BT_STATUS_SUCCESS) {
+            ESP_LOGW(GATTS_TABLE_TAG, "Connection parameter update FAILED!");
+        }
         break;
     default:
         break;
@@ -585,8 +589,42 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         esp_ble_gatts_create_attr_tab(spp_gatt_db, gatts_if, SPP_IDX_NB, SPP_SVC_INST_ID);
         break;
     case ESP_GATTS_READ_EVT:
-        controller_handle_read(param);
+    {
+        ESP_LOGI(GATTS_TABLE_TAG, "READ_EVT: handle=%d, conn_id=%d, trans_id=%lu", 
+                 param->read.handle, param->read.conn_id, param->read.trans_id);
+        
+        // Handle read request for ABF2 (data notify characteristic)
+        if (param->read.handle == spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL]) {
+            // Get current characteristic value
+            uint16_t length = 0;
+            const uint8_t *value = NULL;
+            esp_ble_gatts_get_attr_value(param->read.handle, &length, &value);
+            
+            ESP_LOGI(GATTS_TABLE_TAG, "ABF2 read: length=%d, value=%p", length, value);
+            
+            // Prepare and send response immediately
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
+            rsp.attr_value.handle = param->read.handle;
+            rsp.attr_value.len = length;
+            if (length > 0 && value != NULL && length <= ESP_GATT_MAX_ATTR_LEN) {
+                memcpy(rsp.attr_value.value, value, length);
+            }
+            
+            esp_err_t ret = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, 
+                                         param->read.trans_id, ESP_GATT_OK, &rsp);
+            ESP_LOGI(GATTS_TABLE_TAG, "Sent read response: %d bytes, result=%d", length, ret);
+        } else {
+            // Other characteristics - send empty response
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
+            rsp.attr_value.handle = param->read.handle;
+            rsp.attr_value.len = 0;
+            esp_ble_gatts_send_response(gatts_if, param->read.conn_id,
+                                       param->read.trans_id, ESP_GATT_OK, &rsp);
+        }
         break;
+    }
     case ESP_GATTS_WRITE_EVT:
         controller_handle_write(param);
         break;
@@ -601,6 +639,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         break;
     }
     case ESP_GATTS_RESPONSE_EVT:
+        ESP_LOGI(GATTS_TABLE_TAG, "RESPONSE_EVT: status=%d, handle=%d", 
+                 param->rsp.status, param->rsp.handle);
         break;
     case ESP_GATTS_MTU_EVT:
         ESP_LOGI(GATTS_TABLE_TAG, "MTU exchange, MTU %d", param->mtu.mtu);
@@ -630,6 +670,17 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         is_connected = true;
         memcpy(&spp_remote_bda, &p_data->connect.remote_bda, sizeof(esp_bd_addr_t));
         
+        // Request low-latency connection parameters for fast read/write operations
+        // Connection interval: 7.5ms-15ms, latency: 0, timeout: 4s
+        esp_ble_conn_update_params_t conn_params = {0};
+        memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+        conn_params.min_int = 6;   // 6 * 1.25ms = 7.5ms
+        conn_params.max_int = 12;  // 12 * 1.25ms = 15ms  
+        conn_params.latency = 0;   // No slave latency for instant response
+        conn_params.timeout = 400; // 400 * 10ms = 4s supervision timeout
+        esp_ble_gap_update_conn_params(&conn_params);
+        ESP_LOGI(GATTS_TABLE_TAG, "Requesting low-latency connection parameters");
+        
         // Set MTU to 512 bytes upon connection
         esp_err_t mtu_ret = esp_ble_gatt_set_local_mtu(512);
         if (mtu_ret) {
@@ -637,6 +688,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         } else {
             ESP_LOGI(GATTS_TABLE_TAG, "MTU set to 512 bytes");
         }
+        
+        // Update the lighting characteristic with current state so it's ready to be read
+        controller_update_lighting_characteristic();
         
 #ifdef SUPPORT_HEARTBEAT
         uint16_t cmd = 0;
@@ -719,6 +773,31 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             }
         }
     } while (0);
+}
+
+uint16_t ble_get_conn_id(void)
+{
+    return spp_conn_id;
+}
+
+esp_gatt_if_t ble_get_gatts_if(void)
+{
+    return spp_gatts_if;
+}
+
+uint16_t ble_get_data_recv_handle(void)
+{
+    return spp_handle_table[SPP_IDX_SPP_DATA_RECV_VAL];
+}
+
+uint16_t ble_get_data_notify_handle(void)
+{
+    return spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL];
+}
+
+uint8_t* ble_get_data_notify_buffer(void)
+{
+    return spp_data_notify_val;
 }
 
 esp_err_t init_ble(void)
