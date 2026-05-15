@@ -7,6 +7,7 @@
 
 #include "controller.h"
 #include "servo.h"
+#include "led.h"
 #include "esp_log.h"
 #include "types/ble_packet_types.h"
 #include <string.h>
@@ -31,6 +32,17 @@ static const animation_func_t animation_functions[] = {
 };
 
 #define NUM_ANIMATIONS (sizeof(animation_functions) / sizeof(animation_functions[0]) - 1)
+
+// Array of lighting task functions (indices match lighting_mode_t enum)
+static const lighting_task_func_t lighting_task_functions[] = {
+    led_solid_task,     // Index 0 - LIGHTING_MODE_SOLID
+    led_breathing_task, // Index 1 - LIGHTING_MODE_BREATHING
+    led_marquee_task,   // Index 2 - LIGHTING_MODE_MARQUEE
+    led_chasing_task,   // Index 3 - LIGHTING_MODE_CHASING
+    led_rain_task,      // Index 4 - LIGHTING_MODE_RAIN
+};
+
+#define NUM_LIGHTING_MODES (sizeof(lighting_task_functions) / sizeof(lighting_task_functions[0]))
 
 /**
  * @brief Process animation command and execute the corresponding animation
@@ -72,6 +84,53 @@ static void process_animation_command(const uint8_t *command_data, uint16_t data
     animation_functions[animation_num]();
 }
 
+/**
+ * @brief Process lighting command and start the corresponding LED animation task
+ *
+ * @param packet Pointer to the unpacked data packet containing lighting data
+ */
+static void process_lighting_command(const data_packet_t *packet)
+{
+    if (packet == NULL) {
+        ESP_LOGE(CONTROLLER_TAG, "Invalid packet pointer");
+        return;
+    }
+
+    lighting_data_t lighting;
+    if (!data_packet_get_lighting(packet, &lighting)) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to deserialize lighting data");
+        return;
+    }
+
+    ESP_LOGI(CONTROLLER_TAG, "Lighting command received: mode=%d, speed=%d, colors=%d",
+             lighting.mode, lighting.speed, lighting.color_count);
+
+    // Bounds check on mode
+    if (lighting.mode >= NUM_LIGHTING_MODES) {
+        ESP_LOGE(CONTROLLER_TAG, "Lighting mode %d out of bounds (valid: 0-%d)",
+                 lighting.mode, NUM_LIGHTING_MODES - 1);
+        return;
+    }
+
+    // Task names for each lighting mode
+    const char *task_names[] = {
+        "led_solid", "led_breathing", "led_marquee", "led_chasing", "led_rain"
+    };
+
+    // Start the LED animation task with the selected mode
+    esp_err_t ret = led_start_task(
+        lighting_task_functions[lighting.mode],
+        task_names[lighting.mode],
+        &lighting
+    );
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to start LED task for mode %d", lighting.mode);
+    } else {
+        ESP_LOGI(CONTROLLER_TAG, "Started LED animation: %s", task_names[lighting.mode]);
+    }
+}
+
 void controller_handle_read(esp_ble_gatts_cb_param_t *param)
 {
     ESP_LOGI(CONTROLLER_TAG, "Characteristic read, conn_id %d, handle %d",
@@ -98,17 +157,7 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
             }
             else if (packet.type == DATA_TYPE_LIGHTING)
             {
-                lighting_data_t lighting;
-                if (data_packet_get_lighting(&packet, &lighting))
-                {
-                    ESP_LOGI(CONTROLLER_TAG, "Lighting: mode=%d, speed=%d, colors=%d",
-                             lighting.mode, lighting.speed, lighting.color_count);
-                    // Apply lighting settings here
-                }
-                else
-                {
-                    ESP_LOGE(CONTROLLER_TAG, "Failed to deserialize lighting data");
-                }
+                process_lighting_command(&packet);
             }
             else
             {

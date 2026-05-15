@@ -10,14 +10,494 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "driver/rmt_tx.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define LED_TAG "LED"
+#define NVS_NAMESPACE "lighting"
+#define NVS_KEY "config"
 
 // Global LED strip variables
 static rmt_channel_handle_t led_chan = NULL;
 static rmt_encoder_handle_t led_encoder = NULL;
 static TaskHandle_t led_task_handle = NULL;
+static volatile bool led_task_should_stop = false;
+
+// Helper function to send LED data
+static esp_err_t led_send_data(const uint8_t *led_strip_pixels, size_t length)
+{
+    rmt_transmit_config_t tx_config = {
+        .loop_count = 0,
+    };
+    
+    esp_err_t ret = rmt_transmit(led_chan, led_encoder, led_strip_pixels, length, &tx_config);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    return rmt_tx_wait_all_done(led_chan, portMAX_DELAY);
+}
+
+void led_stop_current_task(void)
+{
+    if (led_task_handle != NULL) {
+        ESP_LOGI(LED_TAG, "Signaling LED task to stop");
+        
+        // Signal the task to stop
+        led_task_should_stop = true;
+        
+        // Wait for the task to actually exit (max 1 second)
+        for (int i = 0; i < 100 && led_task_handle != NULL; i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        
+        // If task still hasn't exited, force delete it as a last resort
+        if (led_task_handle != NULL) {
+            ESP_LOGW(LED_TAG, "Task didn't exit gracefully, forcing deletion");
+            vTaskDelete(led_task_handle);
+            led_task_handle = NULL;
+        }
+        
+        ESP_LOGI(LED_TAG, "LED task stopped");
+    }
+}
+
+/**
+ * @brief Save lighting configuration to NVS
+ * 
+ * @param lighting Pointer to lighting data to save
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t led_save_config(const lighting_data_t *lighting)
+{
+    if (lighting == NULL) {
+        ESP_LOGE(LED_TAG, "Cannot save NULL lighting config");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(LED_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    // Write the lighting data structure
+    err = nvs_set_blob(nvs_handle, NVS_KEY, lighting, sizeof(lighting_data_t));
+    if (err != ESP_OK) {
+        ESP_LOGE(LED_TAG, "Error writing lighting config to NVS: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    // Commit the changes
+    err = nvs_commit(nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(LED_TAG, "Error committing NVS: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(LED_TAG, "Lighting config saved to NVS: mode=%d, speed=%d, colors=%d",
+                 lighting->mode, lighting->speed, lighting->color_count);
+    }
+
+    nvs_close(nvs_handle);
+    return err;
+}
+
+/**
+ * @brief Load lighting configuration from NVS
+ * 
+ * @param lighting Pointer to lighting data structure to populate
+ * @return ESP_OK on success, ESP_ERR_NVS_NOT_FOUND if no config saved, error code otherwise
+ */
+esp_err_t led_load_config(lighting_data_t *lighting)
+{
+    if (lighting == NULL) {
+        ESP_LOGE(LED_TAG, "Cannot load into NULL lighting config");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(LED_TAG, "No saved lighting config found in NVS");
+        } else {
+            ESP_LOGE(LED_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        }
+        return err;
+    }
+
+    // Read the lighting data structure
+    size_t required_size = sizeof(lighting_data_t);
+    err = nvs_get_blob(nvs_handle, NVS_KEY, lighting, &required_size);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(LED_TAG, "No saved lighting config found");
+        } else {
+            ESP_LOGE(LED_TAG, "Error reading lighting config from NVS: %s", esp_err_to_name(err));
+        }
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    ESP_LOGI(LED_TAG, "Lighting config loaded from NVS: mode=%d, speed=%d, colors=%d",
+             lighting->mode, lighting->speed, lighting->color_count);
+
+    nvs_close(nvs_handle);
+    return ESP_OK;
+}
+
+/**
+ * @brief Start a lighting animation task
+ * 
+ * @param task_func Task function pointer
+ * @param task_name Name of the task
+ * @param params Parameters to pass to the task (will be copied)
+ * @return ESP_OK on success, ESP_FAIL on failure
+ */
+esp_err_t led_start_task(lighting_task_func_t task_func, const char *task_name, const lighting_data_t *lighting)
+{
+    // Stop any existing task first
+    led_stop_current_task();
+    
+    // Reset the stop flag for the new task
+    led_task_should_stop = false;
+    
+    // Save the lighting configuration to NVS for persistence
+    esp_err_t save_err = led_save_config(lighting);
+    if (save_err != ESP_OK) {
+        ESP_LOGW(LED_TAG, "Failed to save lighting config to NVS: %s", esp_err_to_name(save_err));
+        // Continue anyway - saving is not critical
+    }
+    
+    // Allocate memory for lighting data to pass to the task
+    lighting_data_t *lighting_param = (lighting_data_t *)malloc(sizeof(lighting_data_t));
+    if (lighting_param == NULL) {
+        ESP_LOGE(LED_TAG, "Failed to allocate memory for lighting task parameter");
+        return ESP_FAIL;
+    }
+    
+    // Copy lighting data
+    memcpy(lighting_param, lighting, sizeof(lighting_data_t));
+    
+    // Create the task
+    BaseType_t ret = xTaskCreate(
+        task_func,
+        task_name,
+        4096,  // Stack size
+        lighting_param,
+        5,     // Priority
+        &led_task_handle
+    );
+    
+    if (ret != pdPASS) {
+        ESP_LOGE(LED_TAG, "Failed to create LED task: %s", task_name);
+        free(lighting_param);
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(LED_TAG, "Started LED task: %s", task_name);
+    return ESP_OK;
+}
+
+// LED solid color mode - displays static colors
+void led_solid_task(void *params)
+{
+    lighting_data_t *lighting = (lighting_data_t *)params;
+    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
+    
+    ESP_LOGI(LED_TAG, "LED solid color task started with %d colors", lighting->color_count);
+    
+    if (lighting->color_count == 0) {
+        // Default to off if no colors specified
+        memset(led_strip_pixels, 0, sizeof(led_strip_pixels));
+        led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
+        free(lighting);
+        led_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    // Set all LEDs to the first color (or cycle through colors evenly)
+    for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+        int color_idx = (i * lighting->color_count) / LED_STRIP_LED_COUNT;
+        rgb_color_t color = lighting->colors[color_idx];
+        
+        // WS2812 uses GRB format
+        led_strip_pixels[i * 3 + 0] = color.g;
+        led_strip_pixels[i * 3 + 1] = color.r;
+        led_strip_pixels[i * 3 + 2] = color.b;
+    }
+    
+    led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
+    
+    ESP_LOGI(LED_TAG, "Solid color applied, task exiting");
+    free(lighting);
+    led_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+// LED breathing mode - pulsing effect
+void led_breathing_task(void *params)
+{
+    lighting_data_t *lighting = (lighting_data_t *)params;
+    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
+    uint32_t brightness = 0;
+    bool increasing = true;
+    
+    ESP_LOGI(LED_TAG, "LED breathing task started, speed=%d, colors=%d", 
+             lighting->speed, lighting->color_count);
+    
+    if (lighting->color_count == 0) {
+        free(lighting);
+        led_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    // Calculate delay based on speed (1-100, higher is faster)
+    uint32_t delay_ms = 10 + ((100 - lighting->speed) * 2);
+    
+    while (!led_task_should_stop) {
+        // Update brightness
+        if (increasing) {
+            brightness += 2;
+            if (brightness >= 255) {
+                brightness = 255;
+                increasing = false;
+            }
+        } else {
+            brightness -= 2;
+            if (brightness == 0) {
+                increasing = true;
+            }
+        }
+        
+        // Apply brightness to all LEDs
+        for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+            int color_idx = (i * lighting->color_count) / LED_STRIP_LED_COUNT;
+            rgb_color_t color = lighting->colors[color_idx];
+            
+            uint8_t r = (color.r * brightness) / 255;
+            uint8_t g = (color.g * brightness) / 255;
+            uint8_t b = (color.b * brightness) / 255;
+            
+            // WS2812 uses GRB format
+            led_strip_pixels[i * 3 + 0] = g;
+            led_strip_pixels[i * 3 + 1] = r;
+            led_strip_pixels[i * 3 + 2] = b;
+        }
+        
+        led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+    
+    ESP_LOGI(LED_TAG, "Breathing task exiting gracefully");
+    free(lighting);
+    led_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+// LED marquee mode - scrolling colors
+void led_marquee_task(void *params)
+{
+    lighting_data_t *lighting = (lighting_data_t *)params;
+    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
+    uint32_t offset = 0;
+    
+    ESP_LOGI(LED_TAG, "LED marquee task started, speed=%d, colors=%d", 
+             lighting->speed, lighting->color_count);
+    
+    if (lighting->color_count == 0) {
+        free(lighting);
+        led_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    // Calculate delay and step based on speed (1-100, higher is faster)
+    uint32_t delay_ms = 10 + ((100 - lighting->speed) * 2);
+    uint32_t step = 1 + (lighting->speed / 20);
+    
+    const int total_range = lighting->color_count * 1000;
+    
+    while (!led_task_should_stop) {
+        // Generate color pattern
+        for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+            uint32_t pos = (offset + (i * total_range / LED_STRIP_LED_COUNT)) % total_range;
+            
+            int color_idx = pos / 1000;
+            int next_idx = (color_idx + 1) % lighting->color_count;
+            uint32_t section_pos = pos % 1000;
+            
+            rgb_color_t color1 = lighting->colors[color_idx];
+            rgb_color_t color2 = lighting->colors[next_idx];
+            
+            uint8_t r, g, b;
+            
+            // Blend between colors
+            if (section_pos < 850) {
+                r = color1.r;
+                g = color1.g;
+                b = color1.b;
+            } else {
+                uint32_t blend = ((section_pos - 850) * 255) / 150;
+                r = (color1.r * (255 - blend) + color2.r * blend) / 255;
+                g = (color1.g * (255 - blend) + color2.g * blend) / 255;
+                b = (color1.b * (255 - blend) + color2.b * blend) / 255;
+            }
+            
+            // WS2812 uses GRB format
+            led_strip_pixels[i * 3 + 0] = g;
+            led_strip_pixels[i * 3 + 1] = r;
+            led_strip_pixels[i * 3 + 2] = b;
+        }
+        
+        led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
+        
+        offset = (offset + step) % total_range;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+    
+    ESP_LOGI(LED_TAG, "Marquee task exiting gracefully");
+    free(lighting);
+    led_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+// LED chasing mode - running lights effect
+void led_chasing_task(void *params)
+{
+    lighting_data_t *lighting = (lighting_data_t *)params;
+    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
+    uint32_t position = 0;
+    
+    ESP_LOGI(LED_TAG, "LED chasing task started, speed=%d, colors=%d", 
+             lighting->speed, lighting->color_count);
+    
+    if (lighting->color_count == 0) {
+        free(lighting);
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    // Calculate delay based on speed (1-100, higher is faster)
+    uint32_t delay_ms = 20 + ((100 - lighting->speed) * 3);
+    const int chase_length = 5; // Number of LEDs in the chase pattern
+    
+    while (!led_task_should_stop) {
+        // Clear all LEDs
+        memset(led_strip_pixels, 0, sizeof(led_strip_pixels));
+        
+        // Draw chase pattern
+        for (int i = 0; i < chase_length; i++) {
+            int led_idx = (position + i) % LED_STRIP_LED_COUNT;
+            int color_idx = (position / LED_STRIP_LED_COUNT) % lighting->color_count;
+            rgb_color_t color = lighting->colors[color_idx];
+            
+            // Fade effect: brightest at the head
+            uint8_t brightness = 255 - (i * 255 / chase_length);
+            uint8_t r = (color.r * brightness) / 255;
+            uint8_t g = (color.g * brightness) / 255;
+            uint8_t b = (color.b * brightness) / 255;
+            
+            // WS2812 uses GRB format
+            led_strip_pixels[led_idx * 3 + 0] = g;
+            led_strip_pixels[led_idx * 3 + 1] = r;
+            led_strip_pixels[led_idx * 3 + 2] = b;
+        }
+        
+        led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
+        
+        position = (position + 1) % (LED_STRIP_LED_COUNT * lighting->color_count);
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+    
+    ESP_LOGI(LED_TAG, "Chasing task exiting gracefully");
+    free(lighting);
+    led_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+// LED rain mode - falling drops effect
+void led_rain_task(void *params)
+{
+    lighting_data_t *lighting = (lighting_data_t *)params;
+    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
+    
+    ESP_LOGI(LED_TAG, "LED rain task started, speed=%d, colors=%d", 
+             lighting->speed, lighting->color_count);
+    
+    if (lighting->color_count == 0) {
+        free(lighting);
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    // Calculate delay based on speed (1-100, higher is faster)
+    uint32_t delay_ms = 30 + ((100 - lighting->speed) * 5);
+    
+    // Random drop positions and colors
+    typedef struct {
+        int position;
+        int color_idx;
+        bool active;
+    } raindrop_t;
+    
+    raindrop_t drops[10];
+    memset(drops, 0, sizeof(drops));
+    
+    uint32_t frame = 0;
+    
+    while (!led_task_should_stop) {
+        // Clear all LEDs
+        memset(led_strip_pixels, 0, sizeof(led_strip_pixels));
+        
+        // Spawn new drops randomly
+        if (frame % 3 == 0) {
+            for (int i = 0; i < 10; i++) {
+                if (!drops[i].active && (rand() % 10) < 3) {
+                    drops[i].position = 0;
+                    drops[i].color_idx = rand() % lighting->color_count;
+                    drops[i].active = true;
+                    break;
+                }
+            }
+        }
+        
+        // Update and draw drops
+        for (int i = 0; i < 10; i++) {
+            if (drops[i].active) {
+                if (drops[i].position < LED_STRIP_LED_COUNT) {
+                    rgb_color_t color = lighting->colors[drops[i].color_idx];
+                    int led_idx = drops[i].position;
+                    
+                    // WS2812 uses GRB format
+                    led_strip_pixels[led_idx * 3 + 0] = color.g;
+                    led_strip_pixels[led_idx * 3 + 1] = color.r;
+                    led_strip_pixels[led_idx * 3 + 2] = color.b;
+                    
+                    drops[i].position++;
+                } else {
+                    drops[i].active = false;
+                }
+            }
+        }
+        
+        led_send_data(led_strip_pixels, sizeof(led_strip_pixels));
+        
+        frame++;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+    
+    ESP_LOGI(LED_TAG, "Rain task exiting gracefully");
+    free(lighting);
+    led_task_handle = NULL;
+    vTaskDelete(NULL);
+}
 
 // Convert HSV to RGB
 static void hsv_to_rgb(uint32_t h, uint32_t s, uint32_t v, uint8_t *r, uint8_t *g, uint8_t *b)
@@ -62,81 +542,6 @@ static void hsv_to_rgb(uint32_t h, uint32_t s, uint32_t v, uint8_t *r, uint8_t *
         *g = rgb_min;
         *b = rgb_max - rgb_adj;
         break;
-    }
-}
-
-// LED rainbow task
-static void led_rainbow_task(void *pvParameters)
-{
-    uint8_t led_strip_pixels[LED_STRIP_LED_COUNT * 3]; // GRB format
-    uint32_t offset = 0;
-    
-    // Highly saturated color palette: blue, hot pink, purple
-    typedef struct {
-        uint8_t r, g, b;
-    } rgb_color_t;
-    
-    rgb_color_t palette[] = {
-        {0, 150, 255},    // Pure saturated blue
-        {255, 0, 180},    // Highly saturated hot pink
-        {180, 0, 255}     // Highly saturated purple
-    };
-    const int palette_size = 3;
-    
-    ESP_LOGI(LED_TAG, "LED color scroll effect task started");
-    
-    while (1) {
-        // Generate color pattern
-        for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
-            // Calculate position in the color cycle (0-2999 range)
-            uint32_t pos = (offset + (i * 3000 / LED_STRIP_LED_COUNT)) % 3000;
-            
-            // Determine which color we're in
-            int color_idx = pos / 1000;  // 0, 1, or 2
-            int next_idx = (color_idx + 1) % palette_size;
-            
-            // Calculate position within this color section (0-999)
-            uint32_t section_pos = pos % 1000;
-            
-            uint8_t r, g, b;
-            
-            // Only blend in the last 15% of each color section for sharper transitions
-            if (section_pos < 850) {
-                // Solid color - no blending
-                r = palette[color_idx].r;
-                g = palette[color_idx].g;
-                b = palette[color_idx].b;
-            } else {
-                // Blend zone - quick transition to next color
-                uint32_t blend = ((section_pos - 850) * 255) / 150;
-                r = (palette[color_idx].r * (255 - blend) + palette[next_idx].r * blend) / 255;
-                g = (palette[color_idx].g * (255 - blend) + palette[next_idx].g * blend) / 255;
-                b = (palette[color_idx].b * (255 - blend) + palette[next_idx].b * blend) / 255;
-            }
-            
-            // Dim to 20% brightness
-            r = r / 5;
-            g = g / 5;
-            b = b / 5;
-            
-            // WS2812 uses GRB format
-            led_strip_pixels[i * 3 + 0] = g;
-            led_strip_pixels[i * 3 + 1] = r;
-            led_strip_pixels[i * 3 + 2] = b;
-        }
-        
-        // Send data to LED strip
-        rmt_transmit_config_t tx_config = {
-            .loop_count = 0,
-        };
-        
-        ESP_ERROR_CHECK(rmt_transmit(led_chan, led_encoder, led_strip_pixels, sizeof(led_strip_pixels), &tx_config));
-        ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, portMAX_DELAY));
-        
-        // Increment offset for scrolling effect
-        offset = (offset + 50) % 3000;
-        
-        vTaskDelay(pdMS_TO_TICKS(50)); // Update every 50ms
     }
 }
 
@@ -188,9 +593,57 @@ esp_err_t init_leds(void)
         return err;
     }
     
-    // Create rainbow task
-    xTaskCreate(led_rainbow_task, "led_rainbow_task", 2048, NULL, 5, &led_task_handle);
+    ESP_LOGI(LED_TAG, "LED strip hardware initialized");
     
-    ESP_LOGI(LED_TAG, "LED strip initialized with scrolling pastel effect");
+    // Try to load saved lighting configuration and apply it
+    lighting_data_t saved_lighting;
+    err = led_load_config(&saved_lighting);
+    if (err == ESP_OK) {
+        // Validate the loaded configuration
+        if (saved_lighting.mode < 5 && saved_lighting.speed > 0 && saved_lighting.speed <= 100) {
+            ESP_LOGI(LED_TAG, "Restoring saved lighting configuration");
+            
+            // Reset stop flag for the new task
+            led_task_should_stop = false;
+            
+            // Task names for each lighting mode
+            const char *task_names[] = {
+                "led_solid", "led_breathing", "led_marquee", "led_chasing", "led_rain"
+            };
+            
+            // Task functions array
+            const lighting_task_func_t task_funcs[] = {
+                led_solid_task, led_breathing_task, led_marquee_task, 
+                led_chasing_task, led_rain_task
+            };
+            
+            // Allocate and copy lighting data for the task
+            lighting_data_t *lighting_param = (lighting_data_t *)malloc(sizeof(lighting_data_t));
+            if (lighting_param != NULL) {
+                memcpy(lighting_param, &saved_lighting, sizeof(lighting_data_t));
+                
+                BaseType_t ret = xTaskCreate(
+                    task_funcs[saved_lighting.mode],
+                    task_names[saved_lighting.mode],
+                    4096,
+                    lighting_param,
+                    5,
+                    &led_task_handle
+                );
+                
+                if (ret != pdPASS) {
+                    ESP_LOGE(LED_TAG, "Failed to restore saved lighting task");
+                    free(lighting_param);
+                } else {
+                    ESP_LOGI(LED_TAG, "Restored lighting: %s", task_names[saved_lighting.mode]);
+                }
+            }
+        } else {
+            ESP_LOGW(LED_TAG, "Saved lighting config is invalid, skipping restore");
+        }
+    } else {
+        ESP_LOGI(LED_TAG, "No saved lighting config, LED strip ready for commands");
+    }
+    
     return ESP_OK;
 }
