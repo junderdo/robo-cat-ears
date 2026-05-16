@@ -1,7 +1,8 @@
 /*
- * SPDX-FileCopyrightText: 2021 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
+ * Description: Main boot and initialization header for robo cat ears
+ * Author: Jeff Underdown (junderdo)
+ * Copyright (C) 2026 Milk Lab Creations
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 

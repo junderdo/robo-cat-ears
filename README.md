@@ -1,3 +1,4 @@
+# Robo Cat Ears Controller ESP32
 ## How to set up connection to ESP32 in WSL
 If you are using Windows Subsystem for Linux (WSL) to run ESP-IDF, you may encounter issues with serial port access when trying to flash or monitor your ESP32 device. Follow these steps to set up serial port access in WSL:
 
@@ -31,7 +32,7 @@ Steps:
    lsusb
    ```
 6. You should see your ESP32 device listed (e.g., Bus 001 Device 002: ID 303a:1001 Espressif USB JTAG/serial debug unit). You can now use this device path in your ESP-IDF commands to flash and monitor your ESP32 device.
-7. Set your ESP-IDF serial port at the bottom of your VSCode window eg. /dev/ttyACM0
+7. Set your ESP-IDF serial port at the bottom of your VSCode window eg. /dev/ttyACM0 -- The rest of this guide will use /dev/ttyACM0 as the serial port it may be different on your system
 8. Make sure your serial port permissions are set correctly. Replace the example port with your actual port if different:
    ```bash
    sudo chmod 0666 /dev/ttyACM0
@@ -51,10 +52,50 @@ Steps:
    ```powershell
    usbipd wsl unbind --busid <BUSID>
    ```
-test
+
+## Bluetooth LE communications
+
+### Protocols
+This project uses the GAP protocol [https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/bluetooth/esp_gap_ble.html] for device discovery and the GATTS protocol for data transfer [https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/bluetooth/esp_gatts.html]. The controller device that runs this software is set up as a GATTS server.
+
+### Control data structures
+#### Animation: The structure of an animation command sent from client device (phone or watch)
+```
+{
+   name: string,
+   uuid: string (uuid v4),
+   keyframes: [
+      {
+         timestamp: number (time in ms),
+         easing: EasingEnum,
+         left: {
+            azi: number (degrees +/- from center),
+            lat: number (degrees +/- from center)
+         },
+         right: {
+            azi: number (degrees +/- from center),
+            lat: number (degrees +/- from center)
+         }
+      },
+      ...
+   ]
+}
+```
+#### EasingEnum TODO
+```
+TODO!
+
+values
+- none
+- easeInOutSine
+- ... REF https://easings.net/
+```
 
 
-## BELOW THIS IS THE ORIGINAL README FROM TEMPLATE PROJECT ##
+
+
+
+## BELOW THIS IS THE ORIGINAL README FROM TEMPLATE GATT SERVER SPP PROJECT FROM ESPRESSIF ##
 
 
 | Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-H2 | ESP32-S3 |
