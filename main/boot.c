@@ -14,6 +14,7 @@
 #include "led.h"
 #include "servo.h"
 #include "ble.h"
+#include "controller.h"
 
 #define ROBO_CAT_EARS_TAG "ROBO_CAT_EARS_APP"
 
@@ -36,6 +37,12 @@ void app_main(void)
     ESP_ERROR_CHECK(
         init_ble());
     ESP_LOGI(ROBO_CAT_EARS_TAG, "BLE initialized");
+
+    // Initialize controller (must be after BLE, before LEDs/servos)
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing controller");
+    ESP_ERROR_CHECK(
+        controller_init());
+    ESP_LOGI(ROBO_CAT_EARS_TAG, "Controller initialized");
 
     // Initialize LEDs
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing LEDs");

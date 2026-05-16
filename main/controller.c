@@ -14,12 +14,34 @@
 #include "types/ble_packet_types.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include <string.h>
 
 #define CONTROLLER_TAG "CONTROLLER"
 
 // Characteristic handle for data
 #define DATA_HANDLE 42
+
+// Command queue configuration
+#define COMMAND_QUEUE_LENGTH 10
+#define CONTROLLER_TASK_STACK_SIZE 4096
+#define CONTROLLER_TASK_PRIORITY 4
+
+// Command types
+typedef enum {
+    CMD_TYPE_ANIMATION,
+    CMD_TYPE_LIGHTING,
+} command_type_t;
+
+// Command structure for queue
+typedef struct {
+    command_type_t type;
+    data_packet_t packet;
+} controller_command_t;
+
+// Queue and task handles
+static QueueHandle_t command_queue = NULL;
+static TaskHandle_t controller_task_handle = NULL;
 
 // Define animation function pointer type
 typedef void (*animation_func_t)(void);
@@ -205,12 +227,10 @@ static void process_lighting_command(const data_packet_t *packet)
 
 void controller_handle_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
-    // Log all read parameters for diagnosis
     ESP_LOGI(CONTROLLER_TAG, "READ EVENT: handle=%d, conn_id=%d, trans_id=%lu, offset=%d, is_long=%d, need_rsp=%d",
              param->read.handle, param->read.conn_id, param->read.trans_id, 
              param->read.offset, param->read.is_long, param->read.need_rsp);
     
-    // Prepare response immediately - no delays, no complex operations
     esp_gatt_rsp_t rsp;
     memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
     rsp.attr_value.handle = param->read.handle;
@@ -218,15 +238,12 @@ void controller_handle_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *pa
     // Check if this is the ABF2 (data notify) characteristic
     if (param->read.handle == ble_get_data_notify_handle())
     {
-        // Get pre-prepared data from buffer
         uint8_t* notify_buffer = ble_get_data_notify_buffer();
         
-        // Get length from attribute (this should be fast - just a lookup)
         uint16_t length = 0;
         const uint8_t *attr_value = NULL;
         esp_ble_gatts_get_attr_value(param->read.handle, &length, &attr_value);
         
-        // Copy to response
         rsp.attr_value.len = length;
         if (length > 0 && length <= ESP_GATT_MAX_ATTR_LEN) {
             memcpy(rsp.attr_value.value, notify_buffer, length);
@@ -261,21 +278,32 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
     // Check if this is the data characteristic
     if (param->write.handle == DATA_HANDLE)
     {
-        // Unpack the data packet and process the command
+        // Unpack the data packet
         data_packet_t packet;
         if (data_packet_unpack(param->write.value, param->write.len, &packet))
         {
+            // Create command for queue
+            controller_command_t cmd;
+            memcpy(&cmd.packet, &packet, sizeof(data_packet_t));
+            
             if (packet.type == DATA_TYPE_ANIMATION)
             {
-                process_animation_command(packet.data, packet.data_len);
+                cmd.type = CMD_TYPE_ANIMATION;
             }
             else if (packet.type == DATA_TYPE_LIGHTING)
             {
-                process_lighting_command(&packet);
+                cmd.type = CMD_TYPE_LIGHTING;
             }
             else
             {
                 ESP_LOGI(CONTROLLER_TAG, "Unhandled data type: %d", packet.type);
+                return;
+            }
+            
+            // Queue the command for processing by controller task
+            // Use a short timeout to avoid blocking the BLE callback
+            if (xQueueSend(command_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+                ESP_LOGW(CONTROLLER_TAG, "Command queue full, dropping command");
             }
         }
         else
@@ -289,4 +317,67 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
     }
 
     // TODO: enable larger data input using prepared writes, and handle them in execute write event
+}
+
+/**
+ * @brief Controller task that processes commands from the queue
+ * 
+ * This task runs independently and processes all heavy operations
+ * (NVS writes, task creation, extensive logging) outside of the
+ * BLE callback context to prevent stack overflow.
+ */
+static void controller_task(void *arg)
+{
+    controller_command_t cmd;
+    
+    ESP_LOGI(CONTROLLER_TAG, "Controller task started");
+    
+    while (1) {
+        // Wait for commands from the queue
+        if (xQueueReceive(command_queue, &cmd, portMAX_DELAY) == pdTRUE) {
+            switch (cmd.type) {
+                case CMD_TYPE_ANIMATION:
+                    process_animation_command(cmd.packet.data, cmd.packet.data_len);
+                    break;
+                    
+                case CMD_TYPE_LIGHTING:
+                    process_lighting_command(&cmd.packet);
+                    break;
+                    
+                default:
+                    ESP_LOGW(CONTROLLER_TAG, "Unknown command type: %d", cmd.type);
+                    break;
+            }
+        }
+    }
+}
+
+esp_err_t controller_init(void)
+{
+    // Create command queue
+    command_queue = xQueueCreate(COMMAND_QUEUE_LENGTH, sizeof(controller_command_t));
+    if (command_queue == NULL) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to create command queue");
+        return ESP_FAIL;
+    }
+    
+    // Create controller task
+    BaseType_t ret = xTaskCreate(
+        controller_task,
+        "controller",
+        CONTROLLER_TASK_STACK_SIZE,
+        NULL,
+        CONTROLLER_TASK_PRIORITY,
+        &controller_task_handle
+    );
+    
+    if (ret != pdPASS) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to create controller task");
+        vQueueDelete(command_queue);
+        command_queue = NULL;
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(CONTROLLER_TAG, "Controller initialized");
+    return ESP_OK;
 }

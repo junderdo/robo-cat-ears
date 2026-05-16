@@ -9,6 +9,16 @@
 #define CONTROLLER_H
 
 #include "esp_gatts_api.h"
+#include "esp_err.h"
+
+/**
+ * @brief Initialize the controller task and command queue
+ * 
+ * Must be called before using any other controller functions
+ * 
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t controller_init(void);
 
 /**
  * @brief Handle BLE GATT read events
