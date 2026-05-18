@@ -15,15 +15,15 @@
 #define SERVO_MAX_PULSEWIDTH_US 2500  // Maximum pulse width in microsecond
 #define SERVO_MAX_ANGLE         180    // Maximum angle (0-180 degrees)
 #define SERVO_FREQ              50     // 50Hz for standard servos
-#define SERVO_PULSE_GPIO_0        2      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_1        3      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_2        4      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_3        5      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_0        1      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_1        2      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_2        3      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_3        4      // GPIO connects to the PWM signal line
 
 /**
  * @brief Initialize the servo motors
  * 
- * Configures 4 servos on GPIO pins 2-5 and resets them to center position
+ * Configures 4 servos on GPIO pins 1-4 and resets them to center position
  */
 esp_err_t init_servos(void);
 

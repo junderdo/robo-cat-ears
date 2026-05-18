@@ -271,6 +271,10 @@ void controller_handle_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *pa
 
 void controller_handle_write(esp_ble_gatts_cb_param_t *param)
 {
+    // Use static storage to avoid stack overflow in BLE callback context (BTC_TASK has limited stack)
+    static data_packet_t packet;
+    static controller_command_t cmd;
+    
     ESP_LOGI(CONTROLLER_TAG, "Characteristic write, conn_id %d, handle %d",
              param->write.conn_id, param->write.handle);
     ESP_LOGI(CONTROLLER_TAG, "Raw packet data: %.*s", param->write.len, param->write.value);
@@ -279,11 +283,9 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
     if (param->write.handle == DATA_HANDLE)
     {
         // Unpack the data packet
-        data_packet_t packet;
         if (data_packet_unpack(param->write.value, param->write.len, &packet))
         {
             // Create command for queue
-            controller_command_t cmd;
             memcpy(&cmd.packet, &packet, sizeof(data_packet_t));
             
             if (packet.type == DATA_TYPE_ANIMATION)

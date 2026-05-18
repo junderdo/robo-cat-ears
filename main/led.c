@@ -13,6 +13,7 @@
 #include "driver/rmt_tx.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "types/lighting_types.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,14 @@ static rmt_encoder_handle_t led_encoder = NULL;
 static TaskHandle_t led_task_handle = NULL;
 static volatile bool led_task_should_stop = false;
 static SemaphoreHandle_t led_task_mutex = NULL;
+
+// default lighting data
+static const lighting_data_t DEFAULT_LIGHTING_DATA = {
+    .mode = LIGHTING_MODE_CHASING,
+    .speed = 50,
+    .color_count = 1,
+    .colors = { (rgb_color_t){.r = 255, .g = 0, .b = 0} } // Default to solid red
+};
 
 // Helper function to send LED data
 static esp_err_t led_send_data(const uint8_t *led_strip_pixels, size_t length)
@@ -684,7 +693,12 @@ esp_err_t init_leds(void)
             ESP_LOGW(LED_TAG, "Saved lighting config is invalid, skipping restore");
         }
     } else {
-        ESP_LOGI(LED_TAG, "No saved lighting config, LED strip ready for commands");
+        ESP_LOGI(LED_TAG, "No saved lighting config to restore, starting with default state");
+        esp_err_t ret = led_start_task(
+        led_marquee_task,
+        "led_marquee",
+        &DEFAULT_LIGHTING_DATA
+    );
     }
     
     return ESP_OK;
