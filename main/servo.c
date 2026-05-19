@@ -77,16 +77,16 @@ esp_err_t move_servo(uint8_t channel, float angle, servo_calibration_t *calibrat
         // Apply calibration offsets based on channel
         switch (channel) {
             case SERVO_LEFT_AZIMUTH: // Left azimuth
-                offset = calibration->left_azi / 1000.0f * SERVO_MAX_ANGLE;
+                offset = calibration->left_azi;
                 break;
             case SERVO_LEFT_LATITUDE: // Left latitude
-                offset = calibration->left_lat / 1000.0f * SERVO_MAX_ANGLE;
+                offset = calibration->left_lat;
                 break;
             case SERVO_RIGHT_AZIMUTH: // Right azimuth
-                offset = calibration->right_azi / 1000.0f * SERVO_MAX_ANGLE;
+                offset = calibration->right_azi;
                 break;
             case SERVO_RIGHT_LATITUDE: // Right latitude
-                offset = calibration->right_lat / 1000.0f * SERVO_MAX_ANGLE;
+                offset = calibration->right_lat;
                 break;
             default:
                 ESP_LOGW(SERVO_TAG, "Invalid servo channel: %d", channel);
@@ -420,10 +420,9 @@ esp_err_t servo_load_calibration(servo_calibration_t *calibration)
     // Deserialize calibration data
     if (!servo_calibration_deserialize(serialized_data, (uint16_t)serialized_len, calibration)) {
         ESP_LOGE(SERVO_TAG, "Failed to deserialize calibration data");
-        return ESP_ERR_INVALID_ARG;
     }
 
-    ESP_LOGI(SERVO_TAG, "Servo calibration loaded from NVS: left_azi=%d, left_lat=%d, right_azi=%d, right_lat=%d",
+    ESP_LOGI(SERVO_TAG, "Servo calibration: left_azi=%d, left_lat=%d, right_azi=%d, right_lat=%d",
              calibration->left_azi, calibration->left_lat, calibration->right_azi, calibration->right_lat);
     return ESP_OK;
 }

@@ -595,13 +595,16 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         
         // Handle read request for ABF2 (data notify characteristic)
         if (param->read.handle == spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL]) {
+            // Always update calibration data before responding
+            controller_update_servo_calibration_characteristic();
+
             // Get current characteristic value
             uint16_t length = 0;
             const uint8_t *value = NULL;
             esp_ble_gatts_get_attr_value(param->read.handle, &length, &value);
-            
+
             ESP_LOGI(GATTS_TABLE_TAG, "ABF2 read: length=%d, value=%p", length, value);
-            
+
             // Prepare and send response immediately
             esp_gatt_rsp_t rsp;
             memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
@@ -610,7 +613,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             if (length > 0 && value != NULL && length <= ESP_GATT_MAX_ATTR_LEN) {
                 memcpy(rsp.attr_value.value, value, length);
             }
-            
+
             esp_err_t ret = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, 
                                          param->read.trans_id, ESP_GATT_OK, &rsp);
             ESP_LOGI(GATTS_TABLE_TAG, "Sent read response: %d bytes, result=%d", length, ret);

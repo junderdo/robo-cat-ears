@@ -212,10 +212,18 @@ void controller_update_servo_calibration_characteristic(void)
 
     // Pack servo calibration data into a data packet
     data_packet_t response_packet;
+
+    uint16_t serialized_len = 0;
+    // Manually serialize to check length
+    servo_calibration_serialize(&current_calibration, response_packet.data, &serialized_len);
+    ESP_LOGI(CONTROLLER_TAG, "[DEBUG] servo_calibration_serialize len = %d", serialized_len);
+
     if (!data_packet_pack_servo_calibration(&response_packet, &current_calibration)) {
         ESP_LOGE(CONTROLLER_TAG, "Failed to pack servo calibration data");
         return;
     }
+
+    ESP_LOGI(CONTROLLER_TAG, "[DEBUG] data_packet_t.data_len = %d", response_packet.data_len);
 
     // Pack the data packet into a byte array
     uint16_t packed_len;
@@ -223,6 +231,7 @@ void controller_update_servo_calibration_characteristic(void)
         ESP_LOGE(CONTROLLER_TAG, "Failed to pack data packet");
         return;
     }
+    ESP_LOGI(CONTROLLER_TAG, "[DEBUG] packed_len = %d", packed_len);
 
     // Update BOTH the buffer AND the GATT attribute value for ESP_GATT_AUTO_RSP
     // The buffer pointer in the attribute table points to spp_data_notify_val
@@ -313,6 +322,8 @@ static void process_servo_calibration_command(const data_packet_t *packet)
     if (ret != ESP_OK) {
         ESP_LOGE(CONTROLLER_TAG, "Failed to save servo calibration to NVS: %d", ret);
     } else {
+        // update servo positions immediately based on new calibration
+        reset_servos();
         ESP_LOGI(CONTROLLER_TAG, "Servo calibration saved successfully");
         // Update the BLE characteristic to reflect the new calibration
         controller_update_servo_calibration_characteristic();

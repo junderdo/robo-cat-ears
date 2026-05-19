@@ -116,7 +116,7 @@ static inline bool data_packet_unpack(const uint8_t *packed, uint16_t packed_len
     packet->type = (data_type_t)packed[0];
     
     // Validate type
-    if (packet->type != DATA_TYPE_ANIMATION && packet->type != DATA_TYPE_LIGHTING) {
+    if (packet->type != DATA_TYPE_ANIMATION && packet->type != DATA_TYPE_LIGHTING && packet->type != DATA_TYPE_SERVO_CALIBRATION) {
         return false;
     }
     
