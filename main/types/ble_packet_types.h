@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include "lighting_types.h"
+#include "servo_calibration_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,8 +34,9 @@ extern "C" {
  * @brief Data type enumeration for packed data transmission
  */
 typedef enum {
-    DATA_TYPE_ANIMATION = 0x01,  /*!< Animation command data */
-    DATA_TYPE_LIGHTING = 0x02,   /*!< Lighting control data */
+    DATA_TYPE_ANIMATION = 0x01,           /*!< Animation command data */
+    DATA_TYPE_LIGHTING = 0x02,            /*!< Lighting control data */
+    DATA_TYPE_SERVO_CALIBRATION = 0x03,   /*!< Servo calibration offset data */
 } data_type_t;
 
 /**
@@ -215,6 +217,53 @@ static inline bool data_packet_get_lighting(const data_packet_t *packet, lightin
     }
     
     return lighting_data_deserialize(packet->data, packet->data_len, lighting);
+}
+
+/**
+ * @brief Pack servo calibration data into a data packet
+ * 
+ * @param packet Pointer to the packet structure to populate
+ * @param calibration Pointer to servo calibration data to pack
+ * @return true if successful, false otherwise
+ */
+static inline bool data_packet_pack_servo_calibration(data_packet_t *packet, const servo_calibration_t *calibration)
+{
+    if (packet == NULL || calibration == NULL) {
+        return false;
+    }
+    
+    uint16_t serialized_len;
+    if (!servo_calibration_serialize(calibration, packet->data, &serialized_len)) {
+        return false;
+    }
+    
+    packet->type = DATA_TYPE_SERVO_CALIBRATION;
+    packet->data_len = serialized_len;
+    
+    return true;
+}
+
+/**
+ * @brief Get servo calibration data from a data packet
+ * 
+ * This function deserializes the packet data into a servo_calibration_t structure.
+ * The packet type must be DATA_TYPE_SERVO_CALIBRATION.
+ * 
+ * @param packet Pointer to the packet structure containing calibration data
+ * @param calibration Pointer to servo calibration data structure to populate
+ * @return true if successful, false otherwise
+ */
+static inline bool data_packet_get_servo_calibration(const data_packet_t *packet, servo_calibration_t *calibration)
+{
+    if (packet == NULL || calibration == NULL) {
+        return false;
+    }
+    
+    if (packet->type != DATA_TYPE_SERVO_CALIBRATION) {
+        return false;
+    }
+    
+    return servo_calibration_deserialize(packet->data, packet->data_len, calibration);
 }
 
 #ifdef __cplusplus

@@ -31,6 +31,7 @@
 typedef enum {
     CMD_TYPE_ANIMATION,
     CMD_TYPE_LIGHTING,
+    CMD_TYPE_SERVO_CALIBRATION,
 } command_type_t;
 
 // Command structure for queue
@@ -177,6 +178,67 @@ void controller_update_lighting_characteristic(void)
 }
 
 /**
+ * @brief Update the BLE characteristic value with current servo calibration data
+ *
+ * This function updates the DATA_HANDLE characteristic value so that when
+ * a client reads it, they get the current servo calibration configuration.
+ */
+void controller_update_servo_calibration_characteristic(void)
+{
+    // Use static storage to avoid stack overflow in BLE callback context
+    static servo_calibration_t current_calibration;
+    static uint8_t packed_data[BLE_PACKET_MAX_SIZE];
+    
+    // Get the actual GATT handle for the DATA NOTIFY characteristic (ABF2)
+    // This is the proper characteristic for server-to-client data
+    uint16_t handle = ble_get_data_notify_handle();
+    if (handle == 0) {
+        ESP_LOGW(CONTROLLER_TAG, "Data notify handle not initialized yet");
+        return;
+    }
+    
+    // Load current servo calibration
+    esp_err_t err = servo_load_calibration(&current_calibration);
+    
+    if (err != ESP_OK) {
+        ESP_LOGW(CONTROLLER_TAG, "Failed to load servo calibration, using default");
+        // Use default/zero calibration data
+        servo_calibration_init(&current_calibration);
+    }
+
+    ESP_LOGI(CONTROLLER_TAG, "Updating characteristic with servo calibration: left_azi=%d, left_lat=%d, right_azi=%d, right_lat=%d",
+             current_calibration.left_azi, current_calibration.left_lat, 
+             current_calibration.right_azi, current_calibration.right_lat);
+
+    // Pack servo calibration data into a data packet
+    data_packet_t response_packet;
+    if (!data_packet_pack_servo_calibration(&response_packet, &current_calibration)) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to pack servo calibration data");
+        return;
+    }
+
+    // Pack the data packet into a byte array
+    uint16_t packed_len;
+    if (!data_packet_pack(&response_packet, packed_data, &packed_len)) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to pack data packet");
+        return;
+    }
+
+    // Update BOTH the buffer AND the GATT attribute value for ESP_GATT_AUTO_RSP
+    // The buffer pointer in the attribute table points to spp_data_notify_val
+    uint8_t* notify_buffer = ble_get_data_notify_buffer();
+    memcpy(notify_buffer, packed_data, packed_len);
+    
+    // CRITICAL: Update the attribute length in GATT table so AUTO_RSP knows the actual size
+    esp_err_t ret = esp_ble_gatts_set_attr_value(handle, packed_len, packed_data);
+    if (ret != ESP_OK) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to update characteristic value (handle=%d): %d", handle, ret);
+    } else {
+        ESP_LOGI(CONTROLLER_TAG, "Updated characteristic value (handle=%d, %d bytes)", handle, packed_len);
+    }
+}
+
+/**
  * @brief Process lighting command and start the corresponding LED animation task
  *
  * @param packet Pointer to the unpacked data packet containing lighting data
@@ -222,6 +284,38 @@ static void process_lighting_command(const data_packet_t *packet)
         ESP_LOGI(CONTROLLER_TAG, "Started LED animation: %s", task_names[lighting.mode]);
         // Update the BLE characteristic with the new lighting data
         controller_update_lighting_characteristic();
+    }
+}
+
+/**
+ * @brief Process servo calibration command and save calibration data
+ *
+ * @param packet Pointer to the unpacked data packet containing calibration data
+ */
+static void process_servo_calibration_command(const data_packet_t *packet)
+{
+    if (packet == NULL) {
+        ESP_LOGE(CONTROLLER_TAG, "Invalid packet pointer for servo calibration");
+        return;
+    }
+
+    servo_calibration_t calibration;
+    if (!data_packet_get_servo_calibration(packet, &calibration)) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to deserialize servo calibration data");
+        return;
+    }
+
+    ESP_LOGI(CONTROLLER_TAG, "Servo calibration received: left_azi=%d, left_lat=%d, right_azi=%d, right_lat=%d",
+             calibration.left_azi, calibration.left_lat, calibration.right_azi, calibration.right_lat);
+
+    // Save calibration to NVS
+    esp_err_t ret = servo_save_calibration(&calibration);
+    if (ret != ESP_OK) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to save servo calibration to NVS: %d", ret);
+    } else {
+        ESP_LOGI(CONTROLLER_TAG, "Servo calibration saved successfully");
+        // Update the BLE characteristic to reflect the new calibration
+        controller_update_servo_calibration_characteristic();
     }
 }
 
@@ -296,6 +390,10 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
             {
                 cmd.type = CMD_TYPE_LIGHTING;
             }
+            else if (packet.type == DATA_TYPE_SERVO_CALIBRATION)
+            {
+                cmd.type = CMD_TYPE_SERVO_CALIBRATION;
+            }
             else
             {
                 ESP_LOGI(CONTROLLER_TAG, "Unhandled data type: %d", packet.type);
@@ -344,6 +442,10 @@ static void controller_task(void *arg)
                     
                 case CMD_TYPE_LIGHTING:
                     process_lighting_command(&cmd.packet);
+                    break;
+                
+                case CMD_TYPE_SERVO_CALIBRATION:
+                    process_servo_calibration_command(&cmd.packet);
                     break;
                     
                 default:
