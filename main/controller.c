@@ -7,6 +7,7 @@
 
 #include "controller.h"
 #include "servo.h"
+#include "servo_calibration.h"
 #include "led.h"
 #include "ble.h"
 #include "esp_log.h"

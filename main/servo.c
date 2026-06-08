@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include "servo.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -13,9 +12,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 
-#define SERVO_TAG "SERVO"
-#define SERVO_CALIBRATION_NVS_NAMESPACE "servo_cal"
-#define SERVO_CALIBRATION_NVS_KEY "calibration"
+#include "servo.h"
+#include "servo_calibration.h"
 
 esp_err_t reset_servos(void)
 {
@@ -375,54 +373,5 @@ esp_err_t servo_save_calibration(const servo_calibration_t *calibration)
 
     nvs_close(nvs_handle);
     ESP_LOGI(SERVO_TAG, "Servo calibration saved to NVS");
-    return ESP_OK;
-}
-
-/**
- * @brief Load servo calibration data from NVS
- * 
- * @param calibration Pointer to servo calibration data structure to populate
- * @return ESP_OK on success, ESP_ERR_NVS_NOT_FOUND if no calibration saved
- */
-esp_err_t servo_load_calibration(servo_calibration_t *calibration)
-{
-    if (calibration == NULL) {
-        ESP_LOGE(SERVO_TAG, "Invalid calibration pointer");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(SERVO_CALIBRATION_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGW(SERVO_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        // Initialize to defaults if namespace doesn't exist
-        servo_calibration_init(calibration);
-        return ESP_OK;
-    }
-
-    // Read from NVS
-    uint8_t serialized_data[8];
-    size_t serialized_len = 8;
-    err = nvs_get_blob(nvs_handle, SERVO_CALIBRATION_NVS_KEY, serialized_data, &serialized_len);
-    
-    nvs_close(nvs_handle);
-
-    servo_calibration_init(calibration);
-    
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(SERVO_TAG, "Servo calibration not found in NVS, using defaults");
-    }
-    
-    if (err != ESP_OK) {
-        ESP_LOGE(SERVO_TAG, "Failed to read from NVS: %s", esp_err_to_name(err));
-    }
-
-    // Deserialize calibration data
-    if (!servo_calibration_deserialize(serialized_data, (uint16_t)serialized_len, calibration)) {
-        ESP_LOGE(SERVO_TAG, "Failed to deserialize calibration data");
-    }
-
-    ESP_LOGI(SERVO_TAG, "Servo calibration: left_azi=%d, left_lat=%d, right_azi=%d, right_lat=%d",
-             calibration->left_azi, calibration->left_lat, calibration->right_azi, calibration->right_lat);
     return ESP_OK;
 }
