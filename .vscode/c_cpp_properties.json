@@ -2,7 +2,7 @@
   "configurations": [
     {
       "name": "ESP-IDF",
-      "compilerPath": "/home/jeffu/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
+      "compilerPath": "${config:idf.toolsPath}/tools/xtensa-esp-elf/esp-15.2.0_20250929/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc",
       "compileCommands": [
         "${config:idf.buildPath}/compile_commands.json"
       ],
