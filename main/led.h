@@ -13,7 +13,13 @@
 #include "types/lighting_types.h"
 
 // LED configuration
+#if CONFIG_IDF_TARGET_ESP32S3
 #define LED_GPIO_0 6 // GPIO connects to the LED strip
+#elif CONFIG_IDF_TARGET_ESP32C3
+#define LED_GPIO_0 5 // GPIO connects to the LED strip
+#else
+#error "Unsupported IDF target: LED_GPIO_0 pin not defined"
+#endif
 #define LED_STRIP_LED_COUNT 31 // Number of LEDs in the strip
 #define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000) // 10MHz resolution
 

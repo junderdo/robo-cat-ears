@@ -48,4 +48,12 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param);
  */
 void controller_update_lighting_characteristic(void);
 
+/**
+ * @brief Update the BLE characteristic with current servo calibration data
+ * 
+ * This should be called whenever servo calibration changes to ensure
+ * the BLE characteristic reflects the current state.
+ */
+void controller_update_servo_calibration_characteristic(void);
+
 #endif // CONTROLLER_H

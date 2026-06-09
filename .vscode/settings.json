@@ -3,12 +3,12 @@
   "idf.espIdfPath": "/home/jeffu/esp/v5.5.2/esp-idf",
   "idf.pythonInstallPath": "/usr/bin/python3",
   "idf.openOcdConfigs": [
-    "board/esp32c3-builtin.cfg"
+    "board/esp32s3-builtin.cfg"
   ],
   "idf.port": "/dev/ttyACM0",
   "idf.toolsPath": "/home/jeffu/.espressif",
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32c3"
+    "IDF_TARGET": "esp32s3"
   },
   "clangd.path": "/home/jeffu/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
   "clangd.arguments": [
