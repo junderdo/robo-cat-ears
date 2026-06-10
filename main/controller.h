@@ -56,4 +56,12 @@ void controller_update_lighting_characteristic(void);
  */
 void controller_update_servo_calibration_characteristic(void);
 
+/**
+ * @brief Update the BLE characteristic with current animation mode data
+ * 
+ * This should be called whenever animation mode changes to ensure
+ * the BLE characteristic reflects the current state.
+ */
+void controller_update_animation_mode_characteristic(void);
+
 #endif // CONTROLLER_H

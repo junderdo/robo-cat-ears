@@ -57,46 +57,4 @@ esp_err_t reset_servos(void);
  */
 esp_err_t move_servo(uint8_t channel, float angle, servo_calibration_t *calibration);
 
-/**
- * @brief Animation 1: Happy wiggle
- * 
- * Performs an upbeat, happy ear movement pattern
- */
-void do_animation_1(void);
-
-/**
- * @brief Animation 2: Sad
- * 
- * Performs a droopy, sad ear movement pattern
- */
-void do_animation_2(void);
-
-/**
- * @brief Animation 3: Playful bounce
- * 
- * Performs rapid, playful bouncing movements
- */
-void do_animation_3(void);
-
-/**
- * @brief Animation 4: Curious tilt
- * 
- * Alternates ears up and down in a curious manner
- */
-void do_animation_4(void);
-
-/**
- * @brief Animation 5: Listening/Radar
- * 
- * Rotates ears side to side like scanning or listening
- */
-void do_animation_5(void);
-
-/**
- * @brief Animation 6: Excited twitch
- * 
- * Performs rapid excited twitching movements
- */
-void do_animation_6(void);
-
 #endif // SERVO_H

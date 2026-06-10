@@ -11,9 +11,10 @@
 #include "nvs_flash.h"
 
 #include "boot.h"
+#include "ble.h"
 #include "led.h"
 #include "servo.h"
-#include "ble.h"
+#include "animation.h"
 #include "controller.h"
 
 #define ROBO_CAT_EARS_TAG "ROBO_CAT_EARS_APP"
@@ -55,7 +56,7 @@ void app_main(void)
     ESP_ERROR_CHECK(
         init_servos());
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Servos initialized");
-    do_animation_1();
+    do_animation(3);
 
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Robo cat ears app initialized");
 }
