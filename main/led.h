@@ -14,9 +14,9 @@
 
 // LED configuration
 #if CONFIG_IDF_TARGET_ESP32S3
-#define LED_GPIO_0 6 // GPIO connects to the LED strip
-#elif CONFIG_IDF_TARGET_ESP32C3
 #define LED_GPIO_0 5 // GPIO connects to the LED strip
+#elif CONFIG_IDF_TARGET_ESP32C3
+#define LED_GPIO_0 6 // GPIO connects to the LED strip
 #else
 #error "Unsupported IDF target: LED_GPIO_0 pin not defined"
 #endif

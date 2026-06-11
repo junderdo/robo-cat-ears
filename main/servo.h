@@ -17,15 +17,15 @@
 #define SERVO_MAX_ANGLE         180    // Maximum angle (0-180 degrees)
 #define SERVO_FREQ              50     // 50Hz for standard servos
 #if CONFIG_IDF_TARGET_ESP32S3
-#define SERVO_PULSE_GPIO_0      2      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_1      3      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_2      4      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_3      5      // GPIO connects to the PWM signal line
-#elif CONFIG_IDF_TARGET_ESP32C3
 #define SERVO_PULSE_GPIO_0      1      // GPIO connects to the PWM signal line
 #define SERVO_PULSE_GPIO_1      2      // GPIO connects to the PWM signal line
 #define SERVO_PULSE_GPIO_2      3      // GPIO connects to the PWM signal line
 #define SERVO_PULSE_GPIO_3      4      // GPIO connects to the PWM signal line
+#elif CONFIG_IDF_TARGET_ESP32C3
+#define SERVO_PULSE_GPIO_0      2      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_1      3      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_2      4      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_3      5      // GPIO connects to the PWM signal line
 #else
 #error "Unsupported IDF target: SERVO_PULSE_GPIO pins not defined"
 #endif
