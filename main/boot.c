@@ -39,6 +39,13 @@ void app_main(void)
         init_ble());
     ESP_LOGI(ROBO_CAT_EARS_TAG, "BLE initialized");
 
+#if CONFIG_IDF_TARGET_ESP32C3
+    // ESP32-C3 is single-core: give the BLE stack time to complete its async
+    // GATTS registration and start advertising before the app tasks compete
+    // for CPU with NVS, servo, and LED initialization.
+    vTaskDelay(pdMS_TO_TICKS(500));
+#endif
+
     // Initialize controller (must be after BLE, before LEDs/servos)
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing controller");
     ESP_ERROR_CHECK(

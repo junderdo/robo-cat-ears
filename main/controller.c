@@ -306,9 +306,19 @@ static void process_animation_mode_command(const data_packet_t *packet)
     esp_err_t ret = animation_mode_save(&mode);
     if (ret != ESP_OK) {
         ESP_LOGE(CONTROLLER_TAG, "Failed to save animation mode to NVS: %d", ret);
+        return;
+    }
+
+    ESP_LOGI(CONTROLLER_TAG, "Animation mode saved successfully");
+    controller_update_animation_mode_characteristic();
+
+    if (mode.mode_id == 1) {
+        ESP_LOGI(CONTROLLER_TAG, "Animation mode enabled, starting animation mode task");
+        stop_animation_mode();
+        start_animation_mode();
     } else {
-        ESP_LOGI(CONTROLLER_TAG, "Animation mode saved successfully");
-        controller_update_animation_mode_characteristic();
+        ESP_LOGI(CONTROLLER_TAG, "Animation mode disabled, stopping animation mode task");
+        stop_animation_mode();
     }
 }
 

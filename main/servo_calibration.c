@@ -130,8 +130,11 @@ esp_err_t servo_load_calibration(servo_calibration_t *calibration)
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(SERVO_CALIBRATION_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGW(SERVO_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        // Initialize to defaults if namespace doesn't exist
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(SERVO_TAG, "Servo calibration namespace not found in NVS, using defaults");
+        } else {
+            ESP_LOGW(SERVO_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        }
         servo_calibration_init(calibration);
         return ESP_OK;
     }

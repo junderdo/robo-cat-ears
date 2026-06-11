@@ -29,11 +29,15 @@ static void animation_mode_task(void *arg)
     free(arg);
 
     // Convert frequency (times/hour) to delay between animations in ms.
-    // Add a small random jitter (+/- 10%) so the timing feels natural.
     uint32_t interval_ms = (uint32_t)((3600000UL) / (uint32_t)frequency);
 
     ESP_LOGI(SERVO_TAG, "Animation mode task started: frequency=%d/hr, interval=%lu ms",
              frequency, (unsigned long)interval_ms);
+
+    // Immediately run one animation as activation feedback before first interval
+    int8_t anim_id = (esp_random() & 1) ? 1 : 2;
+    ESP_LOGI(SERVO_TAG, "Animation mode: immediate trigger animation %d", anim_id);
+    do_animation(anim_id);
 
     while (1) {
         // Wait the interval, split into 1 s ticks so stop is responsive
@@ -45,7 +49,7 @@ static void animation_mode_task(void *arg)
         }
 
         // Pick animation 1 or 2 at random
-        int8_t anim_id = (esp_random() & 1) ? 1 : 2;
+        anim_id = (esp_random() & 1) ? 1 : 2;
         ESP_LOGI(SERVO_TAG, "Animation mode: triggering animation %d", anim_id);
         do_animation(anim_id);
     }
@@ -81,7 +85,7 @@ void start_animation_mode(void)
     BaseType_t ret = xTaskCreate(
         animation_mode_task,
         "anim_mode",
-        4096,
+        8192,
         freq_arg,
         3,
         &animation_mode_task_handle
@@ -93,10 +97,6 @@ void start_animation_mode(void)
         animation_mode_task_handle = NULL;
     } else {
         ESP_LOGI(SERVO_TAG, "Animation mode task started (frequency=%d/hr)", mode.frequency);
-        // Immediately run one animation as activation feedback
-        int8_t anim_id = (esp_random() & 1) ? 1 : 2;
-        ESP_LOGI(SERVO_TAG, "Animation mode: immediate trigger animation %d", anim_id);
-        do_animation(anim_id);
     }
 }
 
@@ -154,11 +154,11 @@ void do_animation_1(servo_calibration_t calibration)
     
     // Move left ear up and left
     ESP_ERROR_CHECK(move_servo(1, 80, &calibration)); // Left latitude up
-    ESP_ERROR_CHECK(move_servo(0, 60, &calibration)); // Left azimuth leftwards
+    ESP_ERROR_CHECK(move_servo(0, 40, &calibration)); // Left azimuth leftwards
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
     // Add slight rotation and hold
-    ESP_ERROR_CHECK(move_servo(0, 50, &calibration)); // Rotate left ear slightly more forward
+    ESP_ERROR_CHECK(move_servo(0, 25, &calibration)); // Rotate left ear slightly more
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
     // Return to center
@@ -172,11 +172,11 @@ void do_animation_2(servo_calibration_t calibration)
     
     // Move right ear up and forward
     ESP_ERROR_CHECK(move_servo(3, 100, &calibration)); // Right latitude up
-    ESP_ERROR_CHECK(move_servo(2, 120, &calibration)); // Right azimuth rightwards
+    ESP_ERROR_CHECK(move_servo(2, 140, &calibration)); // Right azimuth rightwards
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
     // Add slight rotation and hold
-    ESP_ERROR_CHECK(move_servo(2, 130, &calibration)); // Rotate right ear slightly more forward
+    ESP_ERROR_CHECK(move_servo(2, 155, &calibration)); // Rotate right ear slightly more
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
     // Return to center
@@ -279,7 +279,7 @@ void do_animation_5(servo_calibration_t calibration)
     }
     
     // Final rapid flutter
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 2; i++) {
         ESP_ERROR_CHECK(move_servo(1, 85 + (i % 2) * 20, &calibration));
         ESP_ERROR_CHECK(move_servo(3, 95 - (i % 2) * 20, &calibration));
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -296,17 +296,17 @@ void do_animation_6(servo_calibration_t calibration)
 
     for (int i = 0; i < 3; i++) {
         // Left ear down, right ear up
-        ESP_ERROR_CHECK(move_servo(1, 130, &calibration)); // Left ear down
-        ESP_ERROR_CHECK(move_servo(3, 80, &calibration)); // Right ear up
-        ESP_ERROR_CHECK(move_servo(0, 100, &calibration)); // Slight tilt
-        ESP_ERROR_CHECK(move_servo(2, 80, &calibration)); // Slight tilt
+        ESP_ERROR_CHECK(move_servo(1, 140, &calibration)); // Left ear down
+        ESP_ERROR_CHECK(move_servo(3, 70, &calibration)); // Right ear up
+        ESP_ERROR_CHECK(move_servo(0, 110, &calibration)); // Slight tilt
+        ESP_ERROR_CHECK(move_servo(2, 70, &calibration)); // Slight tilt
         vTaskDelay(600 / portTICK_PERIOD_MS);
         
         // Right ear down, left ear up
-        ESP_ERROR_CHECK(move_servo(1, 85, &calibration)); // Left ear up
-        ESP_ERROR_CHECK(move_servo(3, 60, &calibration)); // Right ear down
-        ESP_ERROR_CHECK(move_servo(0, 80, &calibration)); // Slight tilt
-        ESP_ERROR_CHECK(move_servo(2, 100, &calibration)); // Slight tilt
+        ESP_ERROR_CHECK(move_servo(1, 75, &calibration)); // Left ear up
+        ESP_ERROR_CHECK(move_servo(3, 50, &calibration)); // Right ear down
+        ESP_ERROR_CHECK(move_servo(0, 70, &calibration)); // Slight tilt
+        ESP_ERROR_CHECK(move_servo(2, 110, &calibration)); // Slight tilt
         vTaskDelay(600 / portTICK_PERIOD_MS);
     }
     
@@ -321,13 +321,13 @@ void do_animation_7(servo_calibration_t calibration)
 
     for (int i = 0; i < 2; i++) {
         // Rotate both ears outward
-        ESP_ERROR_CHECK(move_servo(0, 60, &calibration)); // Right ear rotate out
-        ESP_ERROR_CHECK(move_servo(2, 120, &calibration)); // Left ear rotate out
+        ESP_ERROR_CHECK(move_servo(0, 50, &calibration)); // Right ear rotate out
+        ESP_ERROR_CHECK(move_servo(2, 130, &calibration)); // Left ear rotate out
         vTaskDelay(400 / portTICK_PERIOD_MS);
         
         // Rotate both ears inward
-        ESP_ERROR_CHECK(move_servo(0, 120, &calibration)); // Right ear rotate in
-        ESP_ERROR_CHECK(move_servo(2, 60, &calibration)); // Left ear rotate in
+        ESP_ERROR_CHECK(move_servo(0, 130, &calibration)); // Right ear rotate in
+        ESP_ERROR_CHECK(move_servo(2, 50, &calibration)); // Left ear rotate in
         vTaskDelay(400 / portTICK_PERIOD_MS);
         
         // Back to center
@@ -337,12 +337,12 @@ void do_animation_7(servo_calibration_t calibration)
     }
     
     // Independent rotation - one ear tracks left, other right
-    ESP_ERROR_CHECK(move_servo(0, 60, &calibration)); // Right ear left
-    ESP_ERROR_CHECK(move_servo(2, 60, &calibration)); // Left ear left
+    ESP_ERROR_CHECK(move_servo(0, 50, &calibration)); // Right ear left
+    ESP_ERROR_CHECK(move_servo(2, 50, &calibration)); // Left ear left
     vTaskDelay(500 / portTICK_PERIOD_MS);
     
-    ESP_ERROR_CHECK(move_servo(0, 120, &calibration)); // Right ear right
-    ESP_ERROR_CHECK(move_servo(2, 120, &calibration)); // Left ear right
+    ESP_ERROR_CHECK(move_servo(0, 130, &calibration)); // Right ear right
+    ESP_ERROR_CHECK(move_servo(2, 130, &calibration)); // Left ear right
     vTaskDelay(500 / portTICK_PERIOD_MS);
     
     ESP_LOGI(SERVO_TAG, "Animation 7 complete");
@@ -356,25 +356,25 @@ void do_animation_8(servo_calibration_t calibration)
 
     for (int i = 0; i < 6; i++) {
         // Quick twitch positions
-        ESP_ERROR_CHECK(move_servo(1, 80 + (i % 3) * 15, &calibration));
-        ESP_ERROR_CHECK(move_servo(3, 100 - (i % 3) * 15, &calibration));
-        ESP_ERROR_CHECK(move_servo(0, 90 + ((i % 2) * 20 - 10), &calibration));
-        ESP_ERROR_CHECK(move_servo(2, 90 + ((i % 2) * 20 - 10), &calibration));
+        ESP_ERROR_CHECK(move_servo(1, 70 + (i % 3) * 20, &calibration));
+        ESP_ERROR_CHECK(move_servo(3, 110 - (i % 3) * 20, &calibration));
+        ESP_ERROR_CHECK(move_servo(0, 90 + ((i % 2) * 30 - 15), &calibration));
+        ESP_ERROR_CHECK(move_servo(2, 90 + ((i % 2) * 30 - 15), &calibration));
         vTaskDelay(120 / portTICK_PERIOD_MS);
     }
     
     // Big excited wiggle
     for (int i = 0; i < 2; i++) {
-        ESP_ERROR_CHECK(move_servo(1, 100, &calibration));
-        ESP_ERROR_CHECK(move_servo(3, 80, &calibration));
-        ESP_ERROR_CHECK(move_servo(0, 110, &calibration));
-        ESP_ERROR_CHECK(move_servo(2, 70, &calibration));
+        ESP_ERROR_CHECK(move_servo(1, 90, &calibration));
+        ESP_ERROR_CHECK(move_servo(3, 70, &calibration));
+        ESP_ERROR_CHECK(move_servo(0, 120, &calibration));
+        ESP_ERROR_CHECK(move_servo(2, 60, &calibration));
         vTaskDelay(200 / portTICK_PERIOD_MS);
         
-        ESP_ERROR_CHECK(move_servo(1, 130, &calibration));
-        ESP_ERROR_CHECK(move_servo(3, 50, &calibration));
-        ESP_ERROR_CHECK(move_servo(0, 70, &calibration));
-        ESP_ERROR_CHECK(move_servo(2, 110, &calibration));
+        ESP_ERROR_CHECK(move_servo(1, 140, &calibration));
+        ESP_ERROR_CHECK(move_servo(3, 40, &calibration));
+        ESP_ERROR_CHECK(move_servo(0, 60, &calibration));
+        ESP_ERROR_CHECK(move_servo(2, 120, &calibration));
         vTaskDelay(200 / portTICK_PERIOD_MS);
     }
     

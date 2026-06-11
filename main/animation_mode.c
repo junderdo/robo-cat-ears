@@ -155,7 +155,11 @@ esp_err_t animation_mode_load(animation_mode_t *mode)
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(ANIMATION_MODE_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGW(ANIMATION_MODE_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(ANIMATION_MODE_TAG, "Animation mode namespace not found in NVS, using defaults");
+        } else {
+            ESP_LOGW(ANIMATION_MODE_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        }
         animation_mode_init(mode);
         return ESP_OK;
     }
