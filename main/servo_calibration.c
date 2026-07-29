@@ -130,8 +130,11 @@ esp_err_t servo_load_calibration(servo_calibration_t *calibration)
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(SERVO_CALIBRATION_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGW(SERVO_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
-        // Initialize to defaults if namespace doesn't exist
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(SERVO_TAG, "Servo calibration namespace not found in NVS, using defaults");
+        } else {
+            ESP_LOGW(SERVO_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        }
         servo_calibration_init(calibration);
         return ESP_OK;
     }
@@ -160,5 +163,55 @@ esp_err_t servo_load_calibration(servo_calibration_t *calibration)
 
     ESP_LOGI(SERVO_TAG, "Servo calibration: left_azi=%d, left_lat=%d, right_azi=%d, right_lat=%d",
              calibration->left_azi, calibration->left_lat, calibration->right_azi, calibration->right_lat);
+    return ESP_OK;
+}
+
+/**
+ * @brief Save servo calibration data to NVS
+ * 
+ * @param calibration Pointer to servo calibration data to save
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t servo_save_calibration(const servo_calibration_t *calibration)
+{
+    if (calibration == NULL) {
+        ESP_LOGE(SERVO_TAG, "Invalid calibration pointer");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(SERVO_CALIBRATION_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(SERVO_TAG, "Error opening NVS handle: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    // Serialize calibration data
+    uint8_t serialized_data[8];
+    uint16_t serialized_len;
+    if (!servo_calibration_serialize(calibration, serialized_data, &serialized_len)) {
+        ESP_LOGE(SERVO_TAG, "Failed to serialize calibration data");
+        nvs_close(nvs_handle);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Write to NVS
+    err = nvs_set_blob(nvs_handle, SERVO_CALIBRATION_NVS_KEY, serialized_data, serialized_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(SERVO_TAG, "Failed to write to NVS: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    // Commit changes
+    err = nvs_commit(nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(SERVO_TAG, "Failed to commit NVS changes: %s", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    nvs_close(nvs_handle);
+    ESP_LOGI(SERVO_TAG, "Servo calibration saved to NVS");
     return ESP_OK;
 }

@@ -5,6 +5,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+ /*
+ TODO: fix this whole "types" abstraction layer, it's really just a collection of helper functions
+ for packing/unpacking data to send over BLE. Maybe rename to "ble_packet_utils" or something?
+ and split into separate files for each data type (animation, lighting, servo calibration)
+ */
+
 #ifndef BLE_PACKET_TYPES_H
 #define BLE_PACKET_TYPES_H
 
@@ -13,6 +19,9 @@
 #include <string.h>
 #include "lighting_types.h"
 #include "servo_calibration_types.h"
+#include "../servo_calibration.h"
+#include "animation_mode_types.h"
+#include "../animation_mode.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,6 +46,8 @@ typedef enum {
     DATA_TYPE_ANIMATION = 0x01,           /*!< Animation command data */
     DATA_TYPE_LIGHTING = 0x02,            /*!< Lighting control data */
     DATA_TYPE_SERVO_CALIBRATION = 0x03,   /*!< Servo calibration offset data */
+    DATA_TYPE_ANIMATION_MODE = 0x04,      /*!< Animation mode data */
+    DATA_TYPE_CUSTOM_ANIMATION = 0x05,    /*!< One chunk of a custom keyframe animation */
 } data_type_t;
 
 /**
@@ -51,18 +62,6 @@ typedef struct {
     uint8_t data[BLE_PACKET_MAX_PAYLOAD_SIZE];  /*!< Payload data (e.g., JSON string) */
     uint16_t data_len;                          /*!< Length of valid data in bytes */
 } data_packet_t;
-
-/**
- * @brief Initialize a data packet with default values
- * 
- * @param packet Pointer to the packet structure to initialize
- */
-static inline void data_packet_init(data_packet_t *packet)
-{
-    packet->type = DATA_TYPE_ANIMATION;
-    packet->data_len = 0;
-    memset(packet->data, 0, BLE_PACKET_MAX_PAYLOAD_SIZE);
-}
 
 /**
  * @brief Pack the data packet into a byte array for transmission
@@ -116,7 +115,9 @@ static inline bool data_packet_unpack(const uint8_t *packed, uint16_t packed_len
     packet->type = (data_type_t)packed[0];
     
     // Validate type
-    if (packet->type != DATA_TYPE_ANIMATION && packet->type != DATA_TYPE_LIGHTING && packet->type != DATA_TYPE_SERVO_CALIBRATION) {
+    if (packet->type != DATA_TYPE_ANIMATION && packet->type != DATA_TYPE_LIGHTING &&
+        packet->type != DATA_TYPE_SERVO_CALIBRATION && packet->type != DATA_TYPE_ANIMATION_MODE &&
+        packet->type != DATA_TYPE_CUSTOM_ANIMATION) {
         return false;
     }
     
@@ -125,49 +126,6 @@ static inline bool data_packet_unpack(const uint8_t *packed, uint16_t packed_len
     if (packet->data_len > 0) {
         memcpy(packet->data, &packed[1], packet->data_len);
     }
-    
-    return true;
-}
-
-/**
- * @brief Set the data payload from a null-terminated string
- * 
- * @param packet Pointer to the packet structure
- * @param str Null-terminated string to copy
- * @return true if successful, false if string is too long
- */
-static inline bool data_packet_set_string(data_packet_t *packet, const char *str)
-{
-    if (packet == NULL || str == NULL) {
-        return false;
-    }
-    
-    size_t len = strlen(str);
-    if (len > BLE_PACKET_MAX_PAYLOAD_SIZE) {
-        return false;
-    }
-    
-    memcpy(packet->data, str, len);
-    packet->data_len = (uint16_t)len;
-    
-    return true;
-}
-
-/**
- * @brief Get the data payload as a null-terminated string
- * 
- * @param packet Pointer to the packet structure
- * @param str Output buffer for string (must be at least BLE_PACKET_MAX_PAYLOAD_SIZE + 1 bytes)
- * @return true if successful, false otherwise
- */
-static inline bool data_packet_get_string(const data_packet_t *packet, char *str)
-{
-    if (packet == NULL || str == NULL) {
-        return false;
-    }
-    
-    memcpy(str, packet->data, packet->data_len);
-    str[packet->data_len] = '\0';  // Null terminate
     
     return true;
 }
@@ -264,6 +222,53 @@ static inline bool data_packet_get_servo_calibration(const data_packet_t *packet
     }
     
     return servo_calibration_deserialize(packet->data, packet->data_len, calibration);
+}
+
+/**
+ * @brief Pack animation mode data into a data packet
+ * 
+ * @param packet Pointer to the packet structure to populate
+ * @param mode Pointer to animation mode data to pack
+ * @return true if successful, false otherwise
+ */
+static inline bool data_packet_pack_animation_mode(data_packet_t *packet, const animation_mode_t *mode)
+{
+    if (packet == NULL || mode == NULL) {
+        return false;
+    }
+    
+    uint16_t serialized_len;
+    if (!animation_mode_serialize(mode, packet->data, &serialized_len)) {
+        return false;
+    }
+    
+    packet->type = DATA_TYPE_ANIMATION_MODE;
+    packet->data_len = serialized_len;
+    
+    return true;
+}
+
+/**
+ * @brief Get animation mode data from a data packet
+ * 
+ * This function deserializes the packet data into an animation_mode_t structure.
+ * The packet type must be DATA_TYPE_ANIMATION_MODE.
+ * 
+ * @param packet Pointer to the packet structure containing animation mode data
+ * @param mode Pointer to animation mode data structure to populate
+ * @return true if successful, false otherwise
+ */
+static inline bool data_packet_get_animation_mode(const data_packet_t *packet, animation_mode_t *mode)
+{
+    if (packet == NULL || mode == NULL) {
+        return false;
+    }
+    
+    if (packet->type != DATA_TYPE_ANIMATION_MODE) {
+        return false;
+    }
+    
+    return animation_mode_deserialize(packet->data, packet->data_len, mode);
 }
 
 #ifdef __cplusplus

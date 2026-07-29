@@ -17,15 +17,15 @@
 #define SERVO_MAX_ANGLE         180    // Maximum angle (0-180 degrees)
 #define SERVO_FREQ              50     // 50Hz for standard servos
 #if CONFIG_IDF_TARGET_ESP32S3
-#define SERVO_PULSE_GPIO_0      2      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_1      3      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_2      4      // GPIO connects to the PWM signal line
-#define SERVO_PULSE_GPIO_3      5      // GPIO connects to the PWM signal line
-#elif CONFIG_IDF_TARGET_ESP32C3
 #define SERVO_PULSE_GPIO_0      1      // GPIO connects to the PWM signal line
 #define SERVO_PULSE_GPIO_1      2      // GPIO connects to the PWM signal line
 #define SERVO_PULSE_GPIO_2      3      // GPIO connects to the PWM signal line
 #define SERVO_PULSE_GPIO_3      4      // GPIO connects to the PWM signal line
+#elif CONFIG_IDF_TARGET_ESP32C3
+#define SERVO_PULSE_GPIO_0      2      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_1      3      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_2      4      // GPIO connects to the PWM signal line
+#define SERVO_PULSE_GPIO_3      5      // GPIO connects to the PWM signal line
 #else
 #error "Unsupported IDF target: SERVO_PULSE_GPIO pins not defined"
 #endif
@@ -56,47 +56,5 @@ esp_err_t reset_servos(void);
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t move_servo(uint8_t channel, float angle, servo_calibration_t *calibration);
-
-/**
- * @brief Animation 1: Happy wiggle
- * 
- * Performs an upbeat, happy ear movement pattern
- */
-void do_animation_1(void);
-
-/**
- * @brief Animation 2: Sad
- * 
- * Performs a droopy, sad ear movement pattern
- */
-void do_animation_2(void);
-
-/**
- * @brief Animation 3: Playful bounce
- * 
- * Performs rapid, playful bouncing movements
- */
-void do_animation_3(void);
-
-/**
- * @brief Animation 4: Curious tilt
- * 
- * Alternates ears up and down in a curious manner
- */
-void do_animation_4(void);
-
-/**
- * @brief Animation 5: Listening/Radar
- * 
- * Rotates ears side to side like scanning or listening
- */
-void do_animation_5(void);
-
-/**
- * @brief Animation 6: Excited twitch
- * 
- * Performs rapid excited twitching movements
- */
-void do_animation_6(void);
 
 #endif // SERVO_H

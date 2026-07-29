@@ -17,5 +17,5 @@ direct_dependencies:
 - espressif/servo
 - idf
 manifest_hash: 8c9214c9053affdb1a1fcd176822af1e94ec8decd2c750a29ae089f2793cb6ce
-target: esp32s3
+target: esp32c3
 version: 2.0.0
