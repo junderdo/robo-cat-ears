@@ -16,6 +16,7 @@
 #include "types/ble_packet_types.h"
 #include "ble.h"
 #include "animation.h"
+#include "custom_animation.h"
 #include "servo.h"
 #include "servo_calibration.h"
 #include "animation_mode.h"
@@ -37,6 +38,7 @@ typedef enum {
     CMD_TYPE_LIGHTING,
     CMD_TYPE_SERVO_CALIBRATION,
     CMD_TYPE_ANIMATION_MODE,
+    CMD_TYPE_CUSTOM_ANIMATION,
 } command_type_t;
 
 // Command structure for queue
@@ -98,6 +100,81 @@ static void process_animation_command(const uint8_t *command_data, uint16_t data
     // Execute animation function
     ESP_LOGI(CONTROLLER_TAG, "Executing Animation ID %d", animation_id);
     do_animation(animation_id);
+}
+
+// Reassembly state for the chunked custom animation transfer. Chunks arrive in
+// order over a single connection, so the transfer is tracked by the next chunk
+// expected rather than a received-set.
+static uint8_t custom_animation_buffer[CUSTOM_ANIMATION_MAX_SERIALIZED_SIZE];
+static uint16_t custom_animation_len = 0;
+static uint8_t custom_animation_transfer_id = 0;
+static uint8_t custom_animation_chunk_count = 0;
+static uint8_t custom_animation_next_chunk = 0;
+
+/**
+ * @brief Accumulate one chunk of a custom animation, playing it once complete
+ *
+ * @param packet Pointer to the unpacked data packet containing a chunk
+ */
+static void process_custom_animation_command(const data_packet_t *packet)
+{
+    if (packet == NULL || packet->data_len < CUSTOM_ANIMATION_CHUNK_HEADER_SIZE) {
+        ESP_LOGE(CONTROLLER_TAG, "Custom animation chunk too short");
+        return;
+    }
+
+    uint8_t transfer_id = packet->data[0];
+    uint8_t chunk_index = packet->data[1];
+    uint8_t chunk_count = packet->data[2];
+    const uint8_t *payload = &packet->data[CUSTOM_ANIMATION_CHUNK_HEADER_SIZE];
+    uint16_t payload_len = packet->data_len - CUSTOM_ANIMATION_CHUNK_HEADER_SIZE;
+
+    if (chunk_count == 0 || chunk_index >= chunk_count) {
+        ESP_LOGE(CONTROLLER_TAG, "Invalid custom animation chunk %d of %d", chunk_index, chunk_count);
+        return;
+    }
+
+    if (chunk_index == 0) {
+        // A new transfer supersedes anything still in flight
+        custom_animation_transfer_id = transfer_id;
+        custom_animation_chunk_count = chunk_count;
+        custom_animation_next_chunk = 0;
+        custom_animation_len = 0;
+    } else if (transfer_id != custom_animation_transfer_id ||
+               chunk_count != custom_animation_chunk_count ||
+               chunk_index != custom_animation_next_chunk) {
+        ESP_LOGW(CONTROLLER_TAG, "Dropping custom animation transfer %d: got chunk %d, expected %d",
+                 transfer_id, chunk_index, custom_animation_next_chunk);
+        custom_animation_chunk_count = 0;
+        return;
+    }
+
+    if (custom_animation_len + payload_len > sizeof(custom_animation_buffer)) {
+        ESP_LOGE(CONTROLLER_TAG, "Custom animation exceeds %d bytes, dropping transfer",
+                 (int)sizeof(custom_animation_buffer));
+        custom_animation_chunk_count = 0;
+        return;
+    }
+
+    memcpy(&custom_animation_buffer[custom_animation_len], payload, payload_len);
+    custom_animation_len += payload_len;
+    custom_animation_next_chunk++;
+
+    ESP_LOGI(CONTROLLER_TAG, "Custom animation chunk %d/%d received (%d bytes, %d total)",
+             chunk_index + 1, chunk_count, payload_len, custom_animation_len);
+
+    if (custom_animation_next_chunk < custom_animation_chunk_count) {
+        return;
+    }
+
+    // Static: the controller task stack cannot hold a full animation
+    static custom_animation_t animation;
+    if (!custom_animation_deserialize(custom_animation_buffer, custom_animation_len, &animation)) {
+        ESP_LOGE(CONTROLLER_TAG, "Failed to deserialize custom animation (%d bytes)", custom_animation_len);
+        return;
+    }
+
+    custom_animation_play(&animation);
 }
 
 /**
@@ -484,6 +561,10 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
             {
                 cmd.type = CMD_TYPE_ANIMATION_MODE;
             }
+            else if (packet.type == DATA_TYPE_CUSTOM_ANIMATION)
+            {
+                cmd.type = CMD_TYPE_CUSTOM_ANIMATION;
+            }
             else
             {
                 ESP_LOGI(CONTROLLER_TAG, "Unhandled data type: %d", packet.type);
@@ -540,6 +621,10 @@ static void controller_task(void *arg)
 
                 case CMD_TYPE_ANIMATION_MODE:
                     process_animation_mode_command(&cmd.packet);
+                    break;
+
+                case CMD_TYPE_CUSTOM_ANIMATION:
+                    process_custom_animation_command(&cmd.packet);
                     break;
                     
                 default:

@@ -5,6 +5,6 @@ list(APPEND srcs
      "rf_testing_configuration_cmd.c")
 endif()
 
-idf_component_register(SRCS "animation_mode.c" "${srcs}"
+idf_component_register(SRCS "custom_animation.c" "animation_mode.c" "${srcs}"
                     PRIV_REQUIRES bt nvs_flash esp_driver_uart console espressif__servo driver
                     INCLUDE_DIRS ".")

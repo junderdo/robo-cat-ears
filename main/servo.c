@@ -67,7 +67,8 @@ esp_err_t init_servos(void)
 
 esp_err_t move_servo(uint8_t channel, float angle, servo_calibration_t *calibration)
 {
-    ESP_LOGI(SERVO_TAG, "Moving servo channel %d to angle %.1f", channel, angle);
+    // Debug level: keyframe playback calls this 4x every 20 ms
+    ESP_LOGD(SERVO_TAG, "Moving servo channel %d to angle %.1f", channel, angle);
     
     float offset = 0;
     float calibrated_angle = angle;
@@ -90,7 +91,7 @@ esp_err_t move_servo(uint8_t channel, float angle, servo_calibration_t *calibrat
                 ESP_LOGW(SERVO_TAG, "Invalid servo channel: %d", channel);
                 break;
         }
-        ESP_LOGI(SERVO_TAG, "servo offset for channel %d: %.1f", channel, offset);
+        ESP_LOGD(SERVO_TAG, "servo offset for channel %d: %.1f", channel, offset);
 
         calibrated_angle += offset;
         // Clamp calibrated angle to valid range
