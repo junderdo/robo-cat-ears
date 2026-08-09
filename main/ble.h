@@ -10,6 +10,7 @@
 
 #include "esp_err.h"
 #include "esp_gatt_defs.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 /**
@@ -56,5 +57,36 @@ uint16_t ble_get_data_notify_handle(void);
  * @return Pointer to spp_data_notify_val buffer
  */
 uint8_t* ble_get_data_notify_buffer(void);
+
+/**
+ * @brief Whether the client has subscribed to indications on ABF2
+ *
+ * @return true once the client writes the CCCD, false again on disconnect
+ */
+bool ble_is_data_notify_enabled(void);
+
+/**
+ * @brief Largest frame the client can exchange, the negotiated MTU minus 3
+ *
+ * Reported to the client in the store capability record, since the ATT MTU is
+ * invisible to Web Bluetooth (ble-protocol.md S1.4).
+ *
+ * @return Usable frame size in bytes
+ */
+uint16_t ble_get_max_chunk_bytes(void);
+
+/**
+ * @brief Indicate a store response on ABF2, chunked to fit the negotiated MTU
+ *
+ * Blocks until every chunk is confirmed, so it must be called from the controller
+ * task rather than a BLE callback.
+ *
+ * @param corr Correlation id, echoed from the request
+ * @param status Response status, repeated in every chunk
+ * @param payload Response payload, may be NULL when payload_len is 0
+ * @param payload_len Length of payload in bytes
+ * @return true if every chunk was delivered and confirmed
+ */
+bool ble_send_store_response(uint8_t corr, uint8_t status, const uint8_t *payload, uint16_t payload_len);
 
 #endif // BLE_H
