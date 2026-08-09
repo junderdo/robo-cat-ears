@@ -25,9 +25,6 @@
 #include "boot.h"
 #include "servo.h"
 #include "controller.h"
-#include "store.h"
-#include "types/ble_packet_types.h"
-#include "types/store_types.h"
 
 #if (CONFIG_EXAMPLE_ENABLE_RF_TESTING_CONFIGURATION_COMMAND)
 #include "rf_testing_configuration_cmd.h"
@@ -59,11 +56,9 @@ static const uint16_t spp_service_uuid = 0xABF0;
 
 #define BLUETOOTH_TASK_PINNED_TO_CORE (0)
 
-// Client Characteristic Configuration bit that subscribes a client to indications
 #define CCCD_INDICATE_BIT (0x0002)
 
-// An indication is confirmed within a connection interval (7.5-15 ms) on a healthy
-// link; this bounds a response against a client that stops confirming.
+// A healthy link confirms within a connection interval, 7.5-15 ms here
 #define INDICATION_CONFIRM_TIMEOUT_MS (2000)
 
 static const uint8_t spp_adv_data[23] = {
@@ -74,7 +69,8 @@ static const uint8_t spp_adv_data[23] = {
     /* Complete Local Name in advertising */
     0x0F, 0x09, 'R', 'O', 'B', 'O', '_', 'C', 'A', 'T', '_', 'E', 'A', 'R', 'S'};
 
-static uint16_t spp_mtu_size = SPP_GATT_MTU_SIZE;
+// The ATT default until a client exchanges MTU, which not every client does
+static uint16_t spp_mtu_size = 23;
 static uint16_t spp_conn_id = 0xffff;
 static esp_gatt_if_t spp_gatts_if = 0xff;
 QueueHandle_t spp_uart_queue = NULL;
@@ -166,13 +162,11 @@ static const uint16_t character_client_config_uuid = ESP_GATT_UUID_CHAR_CLIENT_C
 static const uint8_t char_prop_read_notify = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 static const uint8_t char_prop_read_write = ESP_GATT_CHAR_PROP_BIT_WRITE_NR | ESP_GATT_CHAR_PROP_BIT_READ;
 
-// ABF1 declares WRITE because the store path writes with response. Bluedroid honours
-// it today off the write permission alone, but Chrome resolving a writeValueWithResponse
-// against a missing property bit is undefined (ble-protocol.md S11.1).
+// WRITE, because the store path writes with response (ble-protocol.md S11.1)
 static const uint8_t spp_data_receive_char_prop = ESP_GATT_CHAR_PROP_BIT_WRITE_NR | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ;
 
-// Not selectable by CONFIG_EXAMPLE_SPP_THROUGHPUT: store responses are indications, and
-// the wire contract must not turn on what a stale sdkconfig says (ble-protocol.md S5.2, S11.2).
+// INDICATE unconditionally, not via CONFIG_EXAMPLE_SPP_THROUGHPUT: a wire contract
+// must not turn on what a stale sdkconfig says (ble-protocol.md S5.2, S11.2)
 static const uint8_t spp_data_notity_char_prop = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_INDICATE;
 
 #ifdef SUPPORT_HEARTBEAT
@@ -563,11 +557,6 @@ static void handle_data_notify_cccd_write(esp_ble_gatts_cb_param_t *param)
     uint16_t cccd = param->write.value[0] | (param->write.value[1] << 8);
     enable_data_ntf = (cccd & CCCD_INDICATE_BIT) != 0;
 
-    if (!enable_data_ntf)
-    {
-        store_reset();
-    }
-
     ESP_LOGI(GATTS_TABLE_TAG, "ABF2 CCCD written 0x%04x, indications %s", cccd,
              enable_data_ntf ? "enabled" : "disabled");
 }
@@ -751,7 +740,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         spp_mtu_size = 23;
         is_connected = false;
         enable_data_ntf = false;
-        store_reset();
+        controller_queue_store_reset();
 #ifdef SUPPORT_HEARTBEAT
         enable_heart_ntf = false;
         heartbeat_count_num = 0;
@@ -859,63 +848,30 @@ uint16_t ble_get_max_chunk_bytes(void)
     return spp_mtu_size - 3;
 }
 
-bool ble_send_store_response(uint8_t corr, uint8_t status, const uint8_t *payload, uint16_t payload_len)
+bool ble_indicate_data_notify(const uint8_t *frame, uint16_t frame_len)
 {
-    // Only the controller task sends responses, one at a time, so one frame buffer serves
-    static uint8_t frame[SPP_DATA_MAX_LEN];
-
     if (!is_connected || !enable_data_ntf)
     {
-        ESP_LOGW(GATTS_TABLE_TAG, "Cannot indicate store response: connected %d, indications %d",
-                 is_connected, enable_data_ntf);
+        ESP_LOGW(GATTS_TABLE_TAG, "Cannot indicate: connected %d, indications %d", is_connected, enable_data_ntf);
         return false;
     }
 
-    uint16_t payload_per_chunk = ble_get_max_chunk_bytes() - STORE_FRAME_HEADER_SIZE;
-    uint16_t chunk_count = payload_len == 0 ? 1 : (payload_len + payload_per_chunk - 1) / payload_per_chunk;
-    if (chunk_count > UINT8_MAX)
+    // Discard a confirmation left over from an abandoned response
+    xSemaphoreTake(indication_confirmed, 0);
+
+    esp_err_t ret = esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id,
+                                                spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL],
+                                                frame_len, (uint8_t *)frame, true);
+    if (ret != ESP_OK)
     {
-        ESP_LOGE(GATTS_TABLE_TAG, "Store response of %u bytes needs %u chunks", payload_len, chunk_count);
+        ESP_LOGE(GATTS_TABLE_TAG, "Failed to indicate %u bytes: %s", frame_len, esp_err_to_name(ret));
         return false;
     }
 
-    for (uint16_t chunk_index = 0; chunk_index < chunk_count; chunk_index++)
+    if (xSemaphoreTake(indication_confirmed, pdMS_TO_TICKS(INDICATION_CONFIRM_TIMEOUT_MS)) != pdTRUE)
     {
-        uint16_t offset = chunk_index * payload_per_chunk;
-        uint16_t chunk_len = payload_len - offset;
-        if (chunk_len > payload_per_chunk)
-        {
-            chunk_len = payload_per_chunk;
-        }
-
-        frame[0] = DATA_TYPE_STORE;
-        frame[1] = corr;
-        frame[2] = status;
-        frame[3] = (uint8_t)chunk_index;
-        frame[4] = (uint8_t)chunk_count;
-        if (chunk_len > 0)
-        {
-            memcpy(&frame[STORE_FRAME_HEADER_SIZE], &payload[offset], chunk_len);
-        }
-
-        // Discard a confirmation left over from an abandoned response
-        xSemaphoreTake(indication_confirmed, 0);
-
-        esp_err_t ret = esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id,
-                                                    spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL],
-                                                    STORE_FRAME_HEADER_SIZE + chunk_len, frame, true);
-        if (ret != ESP_OK)
-        {
-            ESP_LOGE(GATTS_TABLE_TAG, "Failed to indicate chunk %u/%u: %s",
-                     chunk_index + 1, chunk_count, esp_err_to_name(ret));
-            return false;
-        }
-
-        if (xSemaphoreTake(indication_confirmed, pdMS_TO_TICKS(INDICATION_CONFIRM_TIMEOUT_MS)) != pdTRUE)
-        {
-            ESP_LOGE(GATTS_TABLE_TAG, "Chunk %u/%u was never confirmed", chunk_index + 1, chunk_count);
-            return false;
-        }
+        ESP_LOGE(GATTS_TABLE_TAG, "Indication of %u bytes was never confirmed", frame_len);
+        return false;
     }
 
     return true;
@@ -930,7 +886,7 @@ esp_err_t init_ble(void)
     indication_confirmed = xSemaphoreCreateBinary();
     if (indication_confirmed == NULL)
     {
-        ESP_LOGE(GATTS_TABLE_TAG, "Failed to create indication confirmation semaphore");
+        ESP_LOGE(BLE_TAG, "Failed to create indication confirmation semaphore");
         return ESP_ERR_NO_MEM;
     }
 

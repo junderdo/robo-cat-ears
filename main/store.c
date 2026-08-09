@@ -11,6 +11,7 @@
 
 #include "store.h"
 #include "ble.h"
+#include "types/ble_packet_types.h"
 #include "types/store_types.h"
 
 #define STORE_TAG "STORE"
@@ -34,33 +35,59 @@ static bool transfer_active(void)
     return request_chunk_count > 0;
 }
 
-static void discard_transfer(void)
+static uint16_t max_chunk_bytes(void)
 {
-    request_chunk_count = 0;
-    request_next_chunk = 0;
-    request_len = 0;
+    uint16_t negotiated = ble_get_max_chunk_bytes();
+    return negotiated < STORE_MAX_FRAME_SIZE ? negotiated : STORE_MAX_FRAME_SIZE;
 }
 
 static void respond(uint8_t corr, store_status_t status, const uint8_t *payload, uint16_t payload_len)
 {
-    if (!ble_send_store_response(corr, status, payload, payload_len))
+    // Only the controller task responds, one response at a time, so one frame buffer serves
+    static uint8_t frame[STORE_MAX_FRAME_SIZE];
+
+    uint16_t payload_per_chunk = max_chunk_bytes() - STORE_FRAME_HEADER_SIZE;
+    uint16_t chunk_count = payload_len == 0 ? 1 : (payload_len + payload_per_chunk - 1) / payload_per_chunk;
+
+    for (uint16_t chunk_index = 0; chunk_index < chunk_count; chunk_index++)
     {
-        ESP_LOGW(STORE_TAG, "Failed to send response to corr %u (status 0x%02x)", corr, status);
+        uint16_t offset = chunk_index * payload_per_chunk;
+        uint16_t chunk_len = payload_len - offset;
+        if (chunk_len > payload_per_chunk)
+        {
+            chunk_len = payload_per_chunk;
+        }
+
+        frame[0] = DATA_TYPE_STORE;
+        frame[1] = corr;
+        frame[2] = status;
+        frame[3] = (uint8_t)chunk_index;
+        frame[4] = (uint8_t)chunk_count;
+        if (chunk_len > 0)
+        {
+            memcpy(&frame[STORE_FRAME_HEADER_SIZE], &payload[offset], chunk_len);
+        }
+
+        if (!ble_indicate_data_notify(frame, STORE_FRAME_HEADER_SIZE + chunk_len))
+        {
+            ESP_LOGW(STORE_TAG, "Response to corr %u failed at chunk %u of %u", corr, chunk_index + 1, chunk_count);
+            return;
+        }
     }
 }
 
 static void respond_capability(uint8_t corr)
 {
-    uint16_t max_chunk_bytes = ble_get_max_chunk_bytes();
+    uint16_t chunk_bytes = max_chunk_bytes();
     const uint8_t record[] = {
         STORE_PROTOCOL_VERSION,
         STORE_SLOT_COUNT,
-        (uint8_t)(max_chunk_bytes >> 8),
-        (uint8_t)(max_chunk_bytes & 0xff),
+        (uint8_t)(chunk_bytes >> 8),
+        (uint8_t)(chunk_bytes & 0xff),
     };
 
     ESP_LOGI(STORE_TAG, "CAPABILITY: version %d, %d slots, %u max chunk bytes",
-             STORE_PROTOCOL_VERSION, STORE_SLOT_COUNT, max_chunk_bytes);
+             STORE_PROTOCOL_VERSION, STORE_SLOT_COUNT, chunk_bytes);
     respond(corr, STORE_STATUS_OK, record, sizeof(record));
 }
 
@@ -108,10 +135,10 @@ void store_process_request(const uint8_t *data, uint16_t data_len)
     const uint8_t *payload = &data[STORE_REQUEST_HEADER_SIZE];
     uint16_t payload_len = data_len - STORE_REQUEST_HEADER_SIZE;
 
+    // A frame this malformed belongs to no transfer, so it does not kill one in flight
     if (chunk_count == 0 || chunk_index >= chunk_count)
     {
         ESP_LOGW(STORE_TAG, "Store request has chunk %u of %u", chunk_index, chunk_count);
-        discard_transfer();
         respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
         return;
     }
@@ -121,7 +148,7 @@ void store_process_request(const uint8_t *data, uint16_t data_len)
     {
         ESP_LOGW(STORE_TAG, "Discarding transfer %u: no chunk within %d s", request_corr,
                  STORE_CHUNK_TIMEOUT_US / 1000000);
-        discard_transfer();
+        store_reset();
     }
 
     if (chunk_index == 0)
@@ -144,7 +171,7 @@ void store_process_request(const uint8_t *data, uint16_t data_len)
     {
         ESP_LOGW(STORE_TAG, "Discarding transfer %u: got chunk %u, expected %u",
                  request_corr, chunk_index, request_next_chunk);
-        discard_transfer();
+        store_reset();
         respond(corr, STORE_STATUS_CHUNK_OUT_OF_ORDER, NULL, 0);
         return;
     }
@@ -152,7 +179,7 @@ void store_process_request(const uint8_t *data, uint16_t data_len)
     if (request_len + payload_len > sizeof(request_buffer))
     {
         ESP_LOGW(STORE_TAG, "Discarding transfer %u: exceeds %d bytes", corr, (int)sizeof(request_buffer));
-        discard_transfer();
+        store_reset();
         respond(corr, STORE_STATUS_TOO_LARGE, NULL, 0);
         return;
     }
@@ -168,11 +195,13 @@ void store_process_request(const uint8_t *data, uint16_t data_len)
     }
 
     uint16_t complete_len = request_len;
-    discard_transfer();
+    store_reset();
     dispatch(corr, opcode, request_buffer, complete_len);
 }
 
 void store_reset(void)
 {
-    discard_transfer();
+    request_chunk_count = 0;
+    request_next_chunk = 0;
+    request_len = 0;
 }

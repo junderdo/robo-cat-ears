@@ -76,17 +76,14 @@ bool ble_is_data_notify_enabled(void);
 uint16_t ble_get_max_chunk_bytes(void);
 
 /**
- * @brief Indicate a store response on ABF2, chunked to fit the negotiated MTU
+ * @brief Send one frame on ABF2 as an indication and wait for the confirmation
  *
- * Blocks until every chunk is confirmed, so it must be called from the controller
- * task rather than a BLE callback.
+ * Blocks, so it must be called from the controller task rather than a BLE callback.
  *
- * @param corr Correlation id, echoed from the request
- * @param status Response status, repeated in every chunk
- * @param payload Response payload, may be NULL when payload_len is 0
- * @param payload_len Length of payload in bytes
- * @return true if every chunk was delivered and confirmed
+ * @param frame Frame to send, no longer than ble_get_max_chunk_bytes()
+ * @param frame_len Length of frame in bytes
+ * @return true if the client confirmed the frame
  */
-bool ble_send_store_response(uint8_t corr, uint8_t status, const uint8_t *payload, uint16_t payload_len);
+bool ble_indicate_data_notify(const uint8_t *frame, uint16_t frame_len);
 
 #endif // BLE_H

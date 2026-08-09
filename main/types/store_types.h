@@ -45,6 +45,13 @@ extern "C" {
 #define STORE_REQUEST_MAX_PAYLOAD_SIZE 819
 
 /**
+ * @brief Largest frame the ears will ever send, bounding max_chunk_bytes
+ *
+ * The local MTU is set to 512, so a negotiated MTU cannot exceed it.
+ */
+#define STORE_MAX_FRAME_SIZE 512
+
+/**
  * @brief Sub-opcodes, carried in the first header byte after corr
  */
 typedef enum {
