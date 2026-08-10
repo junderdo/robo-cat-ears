@@ -1,0 +1,230 @@
+{
+  "description": "Golden bytes for the ears animation wire format. Canonical copy lives at docs/spec/wire-format-fixture.json in github.com/junderdo/milk-lab-creations; github.com/junderdo/robo-cat-ears carries a byte-identical copy at test/wire-format-fixture.json. Regenerate with scripts/gen-wire-format-fixture.py.",
+  "channels": 4,
+  "keyframeWireSize": 12,
+  "maxKeyframes": 64,
+  "cases": [
+    {
+      "name": "single-keyframe",
+      "why": "The floor: one keyframe, the shortest legal animation.",
+      "payload": {
+        "keyframes": [
+          { "timeMs": 4660, "angles": [ 10, 20, 30, 40 ], "easeInType": 1, "easeOutType": 3, "easeInMs": 258, "easeOutMs": 2571 }
+        ]
+      },
+      "hex": [
+        "01",
+        "12340a141e28010301020a0b"
+      ]
+    },
+    {
+      "name": "angle-extremes",
+      "why": "Angles at both ends of the servo range, 0 and 180.",
+      "payload": {
+        "keyframes": [
+          { "timeMs": 0, "angles": [ 0, 180, 0, 180 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 },
+          { "timeMs": 1000, "angles": [ 180, 0, 180, 0 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 }
+        ]
+      },
+      "hex": [
+        "02",
+        "000000b400b4000000000000",
+        "03e8b400b400000000000000"
+      ]
+    },
+    {
+      "name": "every-ease-type",
+      "why": "All four easing curves appear in both the in and the out slot.",
+      "payload": {
+        "keyframes": [
+          { "timeMs": 0, "angles": [ 90, 90, 90, 90 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 100, "easeOutMs": 200 },
+          { "timeMs": 500, "angles": [ 45, 45, 45, 45 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 100, "easeOutMs": 200 },
+          { "timeMs": 1000, "angles": [ 135, 135, 135, 135 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 100, "easeOutMs": 200 },
+          { "timeMs": 1500, "angles": [ 90, 90, 90, 90 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 100, "easeOutMs": 200 }
+        ]
+      },
+      "hex": [
+        "04",
+        "00005a5a5a5a0001006400c8",
+        "01f42d2d2d2d0102006400c8",
+        "03e8878787870203006400c8",
+        "05dc5a5a5a5a0300006400c8"
+      ]
+    },
+    {
+      "name": "uint16-ceilings",
+      "why": "timeMs, easeInMs and easeOutMs all at the uint16 ceiling.",
+      "payload": {
+        "keyframes": [
+          { "timeMs": 0, "angles": [ 0, 0, 0, 0 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 65535, "easeOutMs": 65535 },
+          { "timeMs": 65535, "angles": [ 180, 180, 180, 180 ], "easeInType": 2, "easeOutType": 2, "easeInMs": 65535, "easeOutMs": 65535 }
+        ]
+      },
+      "hex": [
+        "02",
+        "0000000000000000ffffffff",
+        "ffffb4b4b4b40202ffffffff"
+      ]
+    },
+    {
+      "name": "repeated-timestamps",
+      "why": "Times are non-decreasing, not strictly increasing: equal timestamps are legal and snap the pose.",
+      "payload": {
+        "keyframes": [
+          { "timeMs": 0, "angles": [ 10, 10, 10, 10 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 },
+          { "timeMs": 250, "angles": [ 20, 20, 20, 20 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 },
+          { "timeMs": 250, "angles": [ 30, 30, 30, 30 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 },
+          { "timeMs": 250, "angles": [ 40, 40, 40, 40 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 },
+          { "timeMs": 500, "angles": [ 50, 50, 50, 50 ], "easeInType": 0, "easeOutType": 0, "easeInMs": 0, "easeOutMs": 0 }
+        ]
+      },
+      "hex": [
+        "05",
+        "00000a0a0a0a000000000000",
+        "00fa14141414000000000000",
+        "00fa1e1e1e1e000000000000",
+        "00fa28282828000000000000",
+        "01f432323232000000000000"
+      ]
+    },
+    {
+      "name": "max-keyframes",
+      "why": "The ceiling: 64 keyframes, 769 bytes, CUSTOM_ANIMATION_MAX_SERIALIZED_SIZE.",
+      "payload": {
+        "keyframes": [
+          { "timeMs": 0, "angles": [ 0, 180, 0, 0 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 0, "easeOutMs": 0 },
+          { "timeMs": 100, "angles": [ 2, 178, 3, 5 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 10, "easeOutMs": 20 },
+          { "timeMs": 200, "angles": [ 4, 176, 6, 10 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 20, "easeOutMs": 40 },
+          { "timeMs": 300, "angles": [ 6, 174, 9, 15 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 30, "easeOutMs": 60 },
+          { "timeMs": 400, "angles": [ 8, 172, 12, 20 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 40, "easeOutMs": 80 },
+          { "timeMs": 500, "angles": [ 10, 170, 15, 25 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 50, "easeOutMs": 100 },
+          { "timeMs": 600, "angles": [ 12, 168, 18, 30 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 60, "easeOutMs": 120 },
+          { "timeMs": 700, "angles": [ 14, 166, 21, 35 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 70, "easeOutMs": 140 },
+          { "timeMs": 800, "angles": [ 16, 164, 24, 40 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 80, "easeOutMs": 160 },
+          { "timeMs": 900, "angles": [ 18, 162, 27, 45 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 90, "easeOutMs": 180 },
+          { "timeMs": 1000, "angles": [ 20, 160, 30, 50 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 100, "easeOutMs": 200 },
+          { "timeMs": 1100, "angles": [ 22, 158, 33, 55 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 110, "easeOutMs": 220 },
+          { "timeMs": 1200, "angles": [ 24, 156, 36, 60 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 120, "easeOutMs": 240 },
+          { "timeMs": 1300, "angles": [ 26, 154, 39, 65 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 130, "easeOutMs": 260 },
+          { "timeMs": 1400, "angles": [ 28, 152, 42, 70 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 140, "easeOutMs": 280 },
+          { "timeMs": 1500, "angles": [ 30, 150, 45, 75 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 150, "easeOutMs": 300 },
+          { "timeMs": 1600, "angles": [ 32, 148, 48, 80 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 160, "easeOutMs": 320 },
+          { "timeMs": 1700, "angles": [ 34, 146, 51, 85 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 170, "easeOutMs": 340 },
+          { "timeMs": 1800, "angles": [ 36, 144, 54, 90 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 180, "easeOutMs": 360 },
+          { "timeMs": 1900, "angles": [ 38, 142, 57, 95 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 190, "easeOutMs": 380 },
+          { "timeMs": 2000, "angles": [ 40, 140, 60, 100 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 200, "easeOutMs": 400 },
+          { "timeMs": 2100, "angles": [ 42, 138, 63, 105 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 210, "easeOutMs": 420 },
+          { "timeMs": 2200, "angles": [ 44, 136, 66, 110 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 220, "easeOutMs": 440 },
+          { "timeMs": 2300, "angles": [ 46, 134, 69, 115 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 230, "easeOutMs": 460 },
+          { "timeMs": 2400, "angles": [ 48, 132, 72, 120 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 240, "easeOutMs": 480 },
+          { "timeMs": 2500, "angles": [ 50, 130, 75, 125 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 250, "easeOutMs": 500 },
+          { "timeMs": 2600, "angles": [ 52, 128, 78, 130 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 260, "easeOutMs": 520 },
+          { "timeMs": 2700, "angles": [ 54, 126, 81, 135 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 270, "easeOutMs": 540 },
+          { "timeMs": 2800, "angles": [ 56, 124, 84, 140 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 280, "easeOutMs": 560 },
+          { "timeMs": 2900, "angles": [ 58, 122, 87, 145 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 290, "easeOutMs": 580 },
+          { "timeMs": 3000, "angles": [ 60, 120, 90, 150 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 300, "easeOutMs": 600 },
+          { "timeMs": 3100, "angles": [ 62, 118, 93, 155 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 310, "easeOutMs": 620 },
+          { "timeMs": 3200, "angles": [ 64, 116, 96, 160 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 320, "easeOutMs": 640 },
+          { "timeMs": 3300, "angles": [ 66, 114, 99, 165 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 330, "easeOutMs": 660 },
+          { "timeMs": 3400, "angles": [ 68, 112, 102, 170 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 340, "easeOutMs": 680 },
+          { "timeMs": 3500, "angles": [ 70, 110, 105, 175 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 350, "easeOutMs": 700 },
+          { "timeMs": 3600, "angles": [ 72, 108, 108, 180 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 360, "easeOutMs": 720 },
+          { "timeMs": 3700, "angles": [ 74, 106, 111, 4 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 370, "easeOutMs": 740 },
+          { "timeMs": 3800, "angles": [ 76, 104, 114, 9 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 380, "easeOutMs": 760 },
+          { "timeMs": 3900, "angles": [ 78, 102, 117, 14 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 390, "easeOutMs": 780 },
+          { "timeMs": 4000, "angles": [ 80, 100, 120, 19 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 400, "easeOutMs": 800 },
+          { "timeMs": 4100, "angles": [ 82, 98, 123, 24 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 410, "easeOutMs": 820 },
+          { "timeMs": 4200, "angles": [ 84, 96, 126, 29 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 420, "easeOutMs": 840 },
+          { "timeMs": 4300, "angles": [ 86, 94, 129, 34 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 430, "easeOutMs": 860 },
+          { "timeMs": 4400, "angles": [ 88, 92, 132, 39 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 440, "easeOutMs": 880 },
+          { "timeMs": 4500, "angles": [ 90, 90, 135, 44 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 450, "easeOutMs": 900 },
+          { "timeMs": 4600, "angles": [ 92, 88, 138, 49 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 460, "easeOutMs": 920 },
+          { "timeMs": 4700, "angles": [ 94, 86, 141, 54 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 470, "easeOutMs": 940 },
+          { "timeMs": 4800, "angles": [ 96, 84, 144, 59 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 480, "easeOutMs": 960 },
+          { "timeMs": 4900, "angles": [ 98, 82, 147, 64 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 490, "easeOutMs": 980 },
+          { "timeMs": 5000, "angles": [ 100, 80, 150, 69 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 500, "easeOutMs": 1000 },
+          { "timeMs": 5100, "angles": [ 102, 78, 153, 74 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 510, "easeOutMs": 1020 },
+          { "timeMs": 5200, "angles": [ 104, 76, 156, 79 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 520, "easeOutMs": 1040 },
+          { "timeMs": 5300, "angles": [ 106, 74, 159, 84 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 530, "easeOutMs": 1060 },
+          { "timeMs": 5400, "angles": [ 108, 72, 162, 89 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 540, "easeOutMs": 1080 },
+          { "timeMs": 5500, "angles": [ 110, 70, 165, 94 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 550, "easeOutMs": 1100 },
+          { "timeMs": 5600, "angles": [ 112, 68, 168, 99 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 560, "easeOutMs": 1120 },
+          { "timeMs": 5700, "angles": [ 114, 66, 171, 104 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 570, "easeOutMs": 1140 },
+          { "timeMs": 5800, "angles": [ 116, 64, 174, 109 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 580, "easeOutMs": 1160 },
+          { "timeMs": 5900, "angles": [ 118, 62, 177, 114 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 590, "easeOutMs": 1180 },
+          { "timeMs": 6000, "angles": [ 120, 60, 180, 119 ], "easeInType": 0, "easeOutType": 1, "easeInMs": 600, "easeOutMs": 1200 },
+          { "timeMs": 6100, "angles": [ 122, 58, 2, 124 ], "easeInType": 1, "easeOutType": 2, "easeInMs": 610, "easeOutMs": 1220 },
+          { "timeMs": 6200, "angles": [ 124, 56, 5, 129 ], "easeInType": 2, "easeOutType": 3, "easeInMs": 620, "easeOutMs": 1240 },
+          { "timeMs": 6300, "angles": [ 126, 54, 8, 134 ], "easeInType": 3, "easeOutType": 0, "easeInMs": 630, "easeOutMs": 1260 }
+        ]
+      },
+      "hex": [
+        "40",
+        "000000b40000000100000000",
+        "006402b203050102000a0014",
+        "00c804b0060a020300140028",
+        "012c06ae090f0300001e003c",
+        "019008ac0c14000100280050",
+        "01f40aaa0f19010200320064",
+        "02580ca8121e0203003c0078",
+        "02bc0ea6152303000046008c",
+        "032010a418280001005000a0",
+        "038412a21b2d0102005a00b4",
+        "03e814a01e320203006400c8",
+        "044c169e21370300006e00dc",
+        "04b0189c243c0001007800f0",
+        "05141a9a2741010200820104",
+        "05781c982a460203008c0118",
+        "05dc1e962d4b03000096012c",
+        "064020943050000100a00140",
+        "06a422923355010200aa0154",
+        "07082490365a020300b40168",
+        "076c268e395f030000be017c",
+        "07d0288c3c64000100c80190",
+        "08342a8a3f69010200d201a4",
+        "08982c88426e020300dc01b8",
+        "08fc2e864573030000e601cc",
+        "096030844878000100f001e0",
+        "09c432824b7d010200fa01f4",
+        "0a2834804e82020301040208",
+        "0a8c367e51870300010e021c",
+        "0af0387c548c000101180230",
+        "0b543a7a5791010201220244",
+        "0bb83c785a960203012c0258",
+        "0c1c3e765d9b03000136026c",
+        "0c80407460a0000101400280",
+        "0ce4427263a50102014a0294",
+        "0d48447066aa0203015402a8",
+        "0dac466e69af0300015e02bc",
+        "0e10486c6cb40001016802d0",
+        "0e744a6a6f040102017202e4",
+        "0ed84c6872090203017c02f8",
+        "0f3c4e66750e03000186030c",
+        "0fa050647813000101900320",
+        "100452627b180102019a0334",
+        "106854607e1d020301a40348",
+        "10cc565e8122030001ae035c",
+        "1130585c8427000101b80370",
+        "11945a5a872c010201c20384",
+        "11f85c588a31020301cc0398",
+        "125c5e568d36030001d603ac",
+        "12c06054903b000101e003c0",
+        "132462529340010201ea03d4",
+        "138864509645020301f403e8",
+        "13ec664e994a030001fe03fc",
+        "1450684c9c4f000102080410",
+        "14b46a4a9f54010202120424",
+        "15186c48a2590203021c0438",
+        "157c6e46a55e03000226044c",
+        "15e07044a863000102300460",
+        "16447242ab680102023a0474",
+        "16a87440ae6d020302440488",
+        "170c763eb1720300024e049c",
+        "1770783cb4770001025804b0",
+        "17d47a3a027c0102026204c4",
+        "18387c3805810203026c04d8",
+        "189c7e3608860300027604ec"
+      ]
+    }
+  ]
+}
