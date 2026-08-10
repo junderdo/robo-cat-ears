@@ -64,6 +64,30 @@ esp_err_t animation_store_write(uint8_t slot, const uint8_t *record, uint16_t re
     return ESP_OK;
 }
 
+esp_err_t animation_store_read(uint8_t slot, uint8_t *record, uint16_t *record_len)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_from_partition(STORE_NVS_PARTITION, STORE_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        // The namespace does not exist until the first write, so a virgin device gets NOT_FOUND
+        return err;
+    }
+
+    char key[SLOT_KEY_SIZE];
+    slot_key(slot, key);
+
+    size_t len = *record_len;
+    err = nvs_get_blob(handle, key, record, &len);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    *record_len = (uint16_t)len;
+    return ESP_OK;
+}
+
 esp_err_t animation_store_delete(uint8_t slot)
 {
     nvs_handle_t handle;
@@ -93,29 +117,5 @@ esp_err_t animation_store_delete(uint8_t slot)
     }
 
     ESP_LOGI(ANIMATION_STORE_TAG, "Erased slot %u", slot);
-    return ESP_OK;
-}
-
-esp_err_t animation_store_read(uint8_t slot, uint8_t *record, uint16_t *record_len)
-{
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open_from_partition(STORE_NVS_PARTITION, STORE_NVS_NAMESPACE, NVS_READONLY, &handle);
-    if (err != ESP_OK) {
-        // The namespace does not exist until the first write, so a virgin device gets NOT_FOUND
-        return err;
-    }
-
-    char key[SLOT_KEY_SIZE];
-    slot_key(slot, key);
-
-    size_t len = *record_len;
-    err = nvs_get_blob(handle, key, record, &len);
-    nvs_close(handle);
-
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    *record_len = (uint16_t)len;
     return ESP_OK;
 }

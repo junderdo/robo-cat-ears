@@ -45,7 +45,14 @@ static uint16_t max_chunk_bytes(void)
     return negotiated < STORE_MAX_FRAME_SIZE ? negotiated : STORE_MAX_FRAME_SIZE;
 }
 
-static void respond(uint8_t corr, store_status_t status, const uint8_t *payload, uint16_t payload_len)
+/**
+ * @brief Send a response, chunked if it does not fit one frame
+ *
+ * @return Whether the whole response reached the client. PLAY is the only caller
+ *         that must know: a result that was not delivered may not have side
+ *         effects (S9.1).
+ */
+static bool respond(uint8_t corr, store_status_t status, const uint8_t *payload, uint16_t payload_len)
 {
     // Only the controller task responds, one response at a time, so one frame buffer serves
     static uint8_t frame[STORE_MAX_FRAME_SIZE];
@@ -75,9 +82,11 @@ static void respond(uint8_t corr, store_status_t status, const uint8_t *payload,
         if (!ble_indicate_data_notify(frame, STORE_FRAME_HEADER_SIZE + chunk_len))
         {
             ESP_LOGW(STORE_TAG, "Response to corr %u failed at chunk %u of %u", corr, chunk_index + 1, chunk_count);
-            return;
+            return false;
         }
     }
+
+    return true;
 }
 
 static void respond_capability(uint8_t corr)
@@ -370,16 +379,19 @@ static void handle_play(uint8_t corr, const uint8_t *payload, uint16_t payload_l
         return;
     }
 
-    // A record is validated whole before it is written, so one that will not parse or
-    // deserialize now means corrupt flash rather than a bad request
+    // A record is validated whole before it is written, so anything below means corrupt
+    // flash rather than a bad request. The same mis-shape LIST skips on answers
+    // SLOT_EMPTY, so the slot a client cannot see is also the slot it cannot play.
     uint8_t name_len = record_len < STORE_RECORD_PREFIX_SIZE ? 0 : record[STORE_ANIMATION_ID_SIZE];
-    if (record_len < STORE_RECORD_PREFIX_SIZE + name_len)
+    if (name_len < STORE_NAME_MIN_BYTES || name_len > STORE_NAME_MAX_BYTES ||
+        record_len < STORE_RECORD_PREFIX_SIZE + name_len)
     {
         ESP_LOGE(STORE_TAG, "PLAY of slot %u: %u byte record names %u bytes", slot, record_len, name_len);
-        respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
+        respond(corr, STORE_STATUS_SLOT_EMPTY, NULL, 0);
         return;
     }
 
+    // This record does appear in LIST, so a client can see the slot it cannot play
     const uint8_t *wire_format = &record[STORE_RECORD_PREFIX_SIZE + name_len];
     uint16_t wire_format_len = record_len - STORE_RECORD_PREFIX_SIZE - name_len;
     if (!custom_animation_deserialize(wire_format, wire_format_len, &animation))
@@ -391,10 +403,13 @@ static void handle_play(uint8_t corr, const uint8_t *payload, uint16_t payload_l
     }
 
     // Responding first is what makes OK mean accepted rather than finished (S7.5):
-    // custom_animation_play blocks this task for the animation's full duration
+    // custom_animation_play blocks this task for the animation's full duration. A
+    // response that never landed must not move the ears either (S9.1).
     ESP_LOGI(STORE_TAG, "PLAY: slot %u, %u keyframes", slot, animation.keyframe_count);
-    respond(corr, STORE_STATUS_OK, NULL, 0);
-    custom_animation_play(&animation);
+    if (respond(corr, STORE_STATUS_OK, NULL, 0))
+    {
+        custom_animation_play(&animation);
+    }
 }
 
 static void dispatch(uint8_t corr, uint8_t opcode, const uint8_t *payload, uint16_t payload_len)

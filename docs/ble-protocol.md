@@ -13,10 +13,11 @@ Two halves, and the split is load-bearing:
 
 - **§1–§3** describe the surface that **exists today** in firmware: type bytes `0x01`–`0x05`, all
   fire-and-forget, no replies, no errors.
-- **§4–§10** specify the **animation store** — type byte `0x06` — which is **not implemented yet**.
-  It is transactional: every request gets a reply and can fail with an enumerated status.
+- **§4–§10** specify the **animation store** — type byte `0x06`. It is transactional: every request
+  gets a reply and can fail with an enumerated status.
 
-§11 lists exactly what has to be written to make §4–§10 real.
+§11 listed what had to be written to make §4–§10 real; it is now a record of what was, kept because
+it names the things most easily mistaken for pre-existing behaviour.
 
 All multi-byte integers on the wire are **big-endian**, matching the existing serializers
 (`main/types/custom_animation_types.h`, `main/servo_calibration.c`).
@@ -673,8 +674,9 @@ Both figures scale with `slot_count` and the 32-byte name cap. Raising either re
 
 ## 11. What is new code
 
-Everything in §4–§10 is unwritten. Within that, these are the items most easily mistaken for
-"already there" or "just a tweak".
+§4–§10 is now implemented, apart from the two reserved opcodes of §7.7. This section is kept as
+written, in the present tense of the firmware it was written against: these were the items most
+easily mistaken for "already there" or "just a tweak".
 
 ### 11.1 `ABF1` is missing the WRITE property bit
 
