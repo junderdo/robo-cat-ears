@@ -178,7 +178,7 @@ fire-and-forget with no reply; play-by-slot is transactional and can fail with `
 
 Shared by `0x05` and by `STORE` (§7.3). Produced by `custom_animation_serialize`, consumed by
 `custom_animation_deserialize`, and reproduced byte-for-byte by `packWireFormat` in the web app
-(`apps/api/src/payload.ts`).
+(`apps/api/src/wire-format.ts`).
 
 ```
 [keyframe_count:u8]
@@ -196,6 +196,11 @@ Validity, as enforced by `custom_animation_deserialize`:
 - `ease_in_type` and `ease_out_type` `<= 3` (0 none/linear, 1 sine, 2 cubic, 3 elastic)
 - `time_ms` non-decreasing across keyframes — **equal timestamps are legal** (the check is `<`, not
   `<=`)
+
+Both implementations are pinned to a shared golden fixture covering these edges: `make -C test`
+here, `apps/api/test/wire-format-conformance.test.ts` in the web app. The canonical file is
+`docs/spec/wire-format-fixture.json` in the web repo; `test/wire-format-fixture.json` is a copy that
+`test/check-fixture-drift.sh` keeps honest.
 
 ---
 
@@ -818,8 +823,11 @@ Ruled out of scope for this contract, recorded so nobody re-litigates them by ac
 
 Known-open, and expected to be answered outside this document:
 
-- **Cross-repo wire-format conformance testing.** No shared test exists; today the guarantee that
-  `packWireFormat` and `custom_animation_serialize` agree is a code comment in each.
+- ~~**Cross-repo wire-format conformance testing.**~~ Answered: a shared golden fixture, canonical
+  at `docs/spec/wire-format-fixture.json` in the web repo and copied here to
+  `test/wire-format-fixture.json`. `make -C test` diffs the copy against the canonical and
+  runs `test/wire_format_conformance.c` over it; the web app runs its own test over the same bytes.
+  See §2.6.
 - **How the watch renders names using glyphs Montserrat lacks** — fallback character, omission, or a
   wider LVGL font. §9.4 deliberately left this to the renderer rather than the wire format.
 - **Whether the web editor's "try it on the real ears" preview is actually built.** `0x05` was kept

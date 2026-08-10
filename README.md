@@ -95,6 +95,21 @@ values
 
 
 
+## Host tests
+
+```bash
+make -C test          # fixture drift check, then the host tests (gcc + python3, no ESP-IDF)
+make -C test test     # host tests alone, without the drift check
+```
+
+`test/wire_format_conformance.c` pins `custom_animation_serialize` / `custom_animation_deserialize`
+to a golden fixture shared with the web app. The canonical fixture lives in
+[milk-lab-creations](https://github.com/junderdo/milk-lab-creations) at
+`docs/spec/wire-format-fixture.json`; `test/wire-format-fixture.json` is a copy and
+`test/check-fixture-drift.sh` fails if the two disagree. It looks for the checkout beside this repo
+— set `MILKLAB_REPO` if yours is somewhere else. It fails rather than passing quietly when it cannot
+find one, so use `make -C test test` when you knowingly have no checkout to compare against.
+
 ## BELOW THIS IS THE ORIGINAL README FROM TEMPLATE GATT SERVER SPP PROJECT FROM ESPRESSIF ##
 
 
