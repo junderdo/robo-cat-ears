@@ -21,6 +21,7 @@
 #include "servo_calibration.h"
 #include "animation_mode.h"
 #include "led.h"
+#include "store.h"
 
 #define CONTROLLER_TAG "CONTROLLER"
 
@@ -39,6 +40,8 @@ typedef enum {
     CMD_TYPE_SERVO_CALIBRATION,
     CMD_TYPE_ANIMATION_MODE,
     CMD_TYPE_CUSTOM_ANIMATION,
+    CMD_TYPE_STORE,
+    CMD_TYPE_STORE_RESET,
 } command_type_t;
 
 // Command structure for queue
@@ -565,6 +568,10 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
             {
                 cmd.type = CMD_TYPE_CUSTOM_ANIMATION;
             }
+            else if (packet.type == DATA_TYPE_STORE)
+            {
+                cmd.type = CMD_TYPE_STORE;
+            }
             else
             {
                 ESP_LOGI(CONTROLLER_TAG, "Unhandled data type: %d", packet.type);
@@ -588,6 +595,23 @@ void controller_handle_write(esp_ble_gatts_cb_param_t *param)
     }
 
     // TODO: enable larger data input using prepared writes, and handle them in execute write event
+}
+
+void controller_queue_store_reset(void)
+{
+    // Queued rather than called directly so all store state stays on the controller task
+    static const controller_command_t reset_cmd = {.type = CMD_TYPE_STORE_RESET};
+
+    // BLE advertises before controller_init runs, so a disconnect can arrive queue-less
+    if (command_queue == NULL)
+    {
+        return;
+    }
+
+    if (xQueueSend(command_queue, &reset_cmd, 0) != pdTRUE)
+    {
+        ESP_LOGW(CONTROLLER_TAG, "Command queue full, dropping store reset");
+    }
 }
 
 /**
@@ -625,6 +649,14 @@ static void controller_task(void *arg)
 
                 case CMD_TYPE_CUSTOM_ANIMATION:
                     process_custom_animation_command(&cmd.packet);
+                    break;
+
+                case CMD_TYPE_STORE:
+                    store_process_request(cmd.packet.data, cmd.packet.data_len);
+                    break;
+
+                case CMD_TYPE_STORE_RESET:
+                    store_reset();
                     break;
                     
                 default:

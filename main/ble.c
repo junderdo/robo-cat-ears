@@ -8,6 +8,7 @@
 #include "ble.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -55,6 +56,11 @@ static const uint16_t spp_service_uuid = 0xABF0;
 
 #define BLUETOOTH_TASK_PINNED_TO_CORE (0)
 
+#define CCCD_INDICATE_BIT (0x0002)
+
+// A healthy link confirms within a connection interval, 7.5-15 ms here
+#define INDICATION_CONFIRM_TIMEOUT_MS (2000)
+
 static const uint8_t spp_adv_data[23] = {
     /* Flags */
     0x02, 0x01, 0x06,
@@ -63,7 +69,8 @@ static const uint8_t spp_adv_data[23] = {
     /* Complete Local Name in advertising */
     0x0F, 0x09, 'R', 'O', 'B', 'O', '_', 'C', 'A', 'T', '_', 'E', 'A', 'R', 'S'};
 
-static uint16_t spp_mtu_size = SPP_GATT_MTU_SIZE;
+// The ATT default until a client exchanges MTU, which not every client does
+static uint16_t spp_mtu_size = 23;
 static uint16_t spp_conn_id = 0xffff;
 static esp_gatt_if_t spp_gatts_if = 0xff;
 QueueHandle_t spp_uart_queue = NULL;
@@ -78,6 +85,7 @@ static uint8_t heartbeat_count_num = 0;
 
 static bool enable_data_ntf = false;
 static bool is_connected = false;
+static SemaphoreHandle_t indication_confirmed = NULL;
 static esp_bd_addr_t spp_remote_bda = {
     0x0,
 };
@@ -153,11 +161,13 @@ static const uint16_t character_client_config_uuid = ESP_GATT_UUID_CHAR_CLIENT_C
 
 static const uint8_t char_prop_read_notify = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 static const uint8_t char_prop_read_write = ESP_GATT_CHAR_PROP_BIT_WRITE_NR | ESP_GATT_CHAR_PROP_BIT_READ;
-#ifdef CONFIG_EXAMPLE_SPP_THROUGHPUT
-static const uint8_t spp_data_notity_char_prop = char_prop_read_notify;
-#else
+
+// WRITE, because the store path writes with response (ble-protocol.md S11.1)
+static const uint8_t spp_data_receive_char_prop = ESP_GATT_CHAR_PROP_BIT_WRITE_NR | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ;
+
+// INDICATE unconditionally, not via CONFIG_EXAMPLE_SPP_THROUGHPUT: a wire contract
+// must not turn on what a stale sdkconfig says (ble-protocol.md S5.2, S11.2)
 static const uint8_t spp_data_notity_char_prop = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_INDICATE;
-#endif
 
 #ifdef SUPPORT_HEARTBEAT
 static const uint8_t char_prop_read_write_notify = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE_NR | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
@@ -197,7 +207,7 @@ static const esp_gatts_attr_db_t spp_gatt_db[SPP_IDX_NB] =
 
         // SPP -  data receive characteristic Declaration
         [SPP_IDX_SPP_DATA_RECV_CHAR] =
-            {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&character_declaration_uuid, ESP_GATT_PERM_READ, CHAR_DECLARATION_SIZE, CHAR_DECLARATION_SIZE, (uint8_t *)&char_prop_read_write}},
+            {{ESP_GATT_AUTO_RSP}, {ESP_UUID_LEN_16, (uint8_t *)&character_declaration_uuid, ESP_GATT_PERM_READ, CHAR_DECLARATION_SIZE, CHAR_DECLARATION_SIZE, (uint8_t *)&spp_data_receive_char_prop}},
 
         // SPP -  data receive characteristic Value
         [SPP_IDX_SPP_DATA_RECV_VAL] =
@@ -536,6 +546,21 @@ static void spp_task_init(void)
     xTaskCreate(spp_cmd_task, "spp_cmd_task", 4096, NULL, 10, NULL);
 }
 
+static void handle_data_notify_cccd_write(esp_ble_gatts_cb_param_t *param)
+{
+    if (param->write.len != sizeof(uint16_t))
+    {
+        ESP_LOGW(GATTS_TABLE_TAG, "Ignoring %d-byte CCCD write on ABF2", param->write.len);
+        return;
+    }
+
+    uint16_t cccd = param->write.value[0] | (param->write.value[1] << 8);
+    enable_data_ntf = (cccd & CCCD_INDICATE_BIT) != 0;
+
+    ESP_LOGI(GATTS_TABLE_TAG, "ABF2 CCCD written 0x%04x, indications %s", cccd,
+             enable_data_ntf ? "enabled" : "disabled");
+}
+
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
     switch (event)
@@ -629,6 +654,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         break;
     }
     case ESP_GATTS_WRITE_EVT:
+        if (param->write.handle == spp_handle_table[SPP_IDX_SPP_DATA_NTF_CFG])
+        {
+            handle_data_notify_cccd_write(param);
+            break;
+        }
         controller_handle_write(param);
         break;
     case ESP_GATTS_EXEC_WRITE_EVT:
@@ -653,6 +683,10 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         if (param->conf.status)
         {
             ESP_LOGI(GATTS_TABLE_TAG, "Confirm received, status %d, handle %d", param->conf.status, param->conf.handle);
+        }
+        if (param->conf.handle == spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL] && indication_confirmed != NULL)
+        {
+            xSemaphoreGive(indication_confirmed);
         }
         break;
     case ESP_GATTS_UNREG_EVT:
@@ -706,6 +740,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         spp_mtu_size = 23;
         is_connected = false;
         enable_data_ntf = false;
+        controller_queue_store_reset();
 #ifdef SUPPORT_HEARTBEAT
         enable_heart_ntf = false;
         heartbeat_count_num = 0;
@@ -803,11 +838,57 @@ uint8_t* ble_get_data_notify_buffer(void)
     return spp_data_notify_val;
 }
 
+bool ble_is_data_notify_enabled(void)
+{
+    return enable_data_ntf;
+}
+
+uint16_t ble_get_max_chunk_bytes(void)
+{
+    return spp_mtu_size - 3;
+}
+
+bool ble_indicate_data_notify(const uint8_t *frame, uint16_t frame_len)
+{
+    if (!is_connected || !enable_data_ntf)
+    {
+        ESP_LOGW(GATTS_TABLE_TAG, "Cannot indicate: connected %d, indications %d", is_connected, enable_data_ntf);
+        return false;
+    }
+
+    // Discard a confirmation left over from an abandoned response
+    xSemaphoreTake(indication_confirmed, 0);
+
+    esp_err_t ret = esp_ble_gatts_send_indicate(spp_gatts_if, spp_conn_id,
+                                                spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL],
+                                                frame_len, (uint8_t *)frame, true);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(GATTS_TABLE_TAG, "Failed to indicate %u bytes: %s", frame_len, esp_err_to_name(ret));
+        return false;
+    }
+
+    if (xSemaphoreTake(indication_confirmed, pdMS_TO_TICKS(INDICATION_CONFIRM_TIMEOUT_MS)) != pdTRUE)
+    {
+        ESP_LOGE(GATTS_TABLE_TAG, "Indication of %u bytes was never confirmed", frame_len);
+        return false;
+    }
+
+    return true;
+}
+
 esp_err_t init_ble(void)
 {
     ESP_LOGI(BLE_TAG, "Initializing BLE");
     esp_err_t ret;
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+
+    indication_confirmed = xSemaphoreCreateBinary();
+    if (indication_confirmed == NULL)
+    {
+        ESP_LOGE(BLE_TAG, "Failed to create indication confirmation semaphore");
+        return ESP_ERR_NO_MEM;
+    }
 
     spp_task_init();
 

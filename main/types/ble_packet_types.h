@@ -48,6 +48,7 @@ typedef enum {
     DATA_TYPE_SERVO_CALIBRATION = 0x03,   /*!< Servo calibration offset data */
     DATA_TYPE_ANIMATION_MODE = 0x04,      /*!< Animation mode data */
     DATA_TYPE_CUSTOM_ANIMATION = 0x05,    /*!< One chunk of a custom keyframe animation */
+    DATA_TYPE_STORE = 0x06,               /*!< One frame of an animation store request or response */
 } data_type_t;
 
 /**
@@ -117,7 +118,7 @@ static inline bool data_packet_unpack(const uint8_t *packed, uint16_t packed_len
     // Validate type
     if (packet->type != DATA_TYPE_ANIMATION && packet->type != DATA_TYPE_LIGHTING &&
         packet->type != DATA_TYPE_SERVO_CALIBRATION && packet->type != DATA_TYPE_ANIMATION_MODE &&
-        packet->type != DATA_TYPE_CUSTOM_ANIMATION) {
+        packet->type != DATA_TYPE_CUSTOM_ANIMATION && packet->type != DATA_TYPE_STORE) {
         return false;
     }
     

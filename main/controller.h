@@ -41,6 +41,13 @@ void controller_handle_read(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *pa
 void controller_handle_write(esp_ble_gatts_cb_param_t *param);
 
 /**
+ * @brief Discard any store transfer in flight, on the controller task
+ *
+ * Safe to call from a BLE callback, unlike store_reset itself.
+ */
+void controller_queue_store_reset(void);
+
+/**
  * @brief Update the BLE characteristic with current lighting data
  * 
  * This should be called whenever lighting configuration changes to ensure
