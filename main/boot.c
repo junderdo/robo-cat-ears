@@ -34,9 +34,14 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // Initialize the animation store's own NVS partition
-    ESP_ERROR_CHECK(
-        animation_store_init());
+    // Initialize the animation store's own NVS partition. Flashing the app without the
+    // new partition table leaves it absent, which must not take the rest of the firmware
+    // down with it: the store then answers STORAGE_FAILURE and lists empty.
+    ret = animation_store_init();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(ROBO_CAT_EARS_TAG, "Animation store unavailable: %s", esp_err_to_name(ret));
+    }
 
     // Initialize BLE
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing BLE");

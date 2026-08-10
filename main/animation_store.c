@@ -29,8 +29,10 @@ esp_err_t animation_store_init(void)
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_LOGW(ANIMATION_STORE_TAG, "Reformatting the %s partition: %s",
                  STORE_NVS_PARTITION, esp_err_to_name(err));
-        ESP_ERROR_CHECK(nvs_flash_erase_partition(STORE_NVS_PARTITION));
-        err = nvs_flash_init_partition(STORE_NVS_PARTITION);
+        err = nvs_flash_erase_partition(STORE_NVS_PARTITION);
+        if (err == ESP_OK) {
+            err = nvs_flash_init_partition(STORE_NVS_PARTITION);
+        }
     }
     return err;
 }
@@ -67,14 +69,14 @@ esp_err_t animation_store_read(uint8_t slot, uint8_t *record, uint16_t *record_l
     nvs_handle_t handle;
     esp_err_t err = nvs_open_from_partition(STORE_NVS_PARTITION, STORE_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
-        // The namespace does not exist until the first write, so a virgin device lands here
-        return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NVS_NOT_FOUND : err;
+        // The namespace does not exist until the first write, so a virgin device gets NOT_FOUND
+        return err;
     }
 
     char key[SLOT_KEY_SIZE];
     slot_key(slot, key);
 
-    size_t len = STORE_RECORD_MAX_SIZE;
+    size_t len = *record_len;
     err = nvs_get_blob(handle, key, record, &len);
     nvs_close(handle);
 

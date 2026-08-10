@@ -39,8 +39,9 @@ esp_err_t animation_store_write(uint8_t slot, const uint8_t *record, uint16_t re
  * @brief Read a slot record
  *
  * @param slot Slot index, 0..STORE_SLOT_COUNT-1
- * @param record Output buffer, at least STORE_RECORD_MAX_SIZE bytes
- * @param record_len Receives the number of bytes read
+ * @param record Output buffer
+ * @param record_len In: the capacity of `record`. Out: the number of bytes read.
+ *                   ESP_ERR_NVS_INVALID_LENGTH if the record does not fit.
  * @return ESP_OK on success, ESP_ERR_NVS_NOT_FOUND if the slot is empty,
  *         error code otherwise
  */

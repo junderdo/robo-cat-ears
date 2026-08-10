@@ -94,10 +94,8 @@ static void respond_capability(uint8_t corr)
     respond(corr, STORE_STATUS_OK, record, sizeof(record));
 }
 
-// Bytes of a STORE request payload that precede the name
-#define STORE_REQUEST_PREFIX_SIZE (1 + STORE_ANIMATION_ID_SIZE + 1)
-
-// Bytes of a slot record that precede the name
+// Bytes of a slot record that precede the name, i.e. [animation_id:16][name_len:1].
+// A STORE request payload is one slot byte followed by exactly such a record.
 #define STORE_RECORD_PREFIX_SIZE (STORE_ANIMATION_ID_SIZE + 1)
 
 /**
@@ -187,7 +185,7 @@ static void handle_list(uint8_t corr)
 
     for (uint8_t slot = 0; slot < STORE_SLOT_COUNT; slot++)
     {
-        uint16_t record_len;
+        uint16_t record_len = STORE_RECORD_MAX_SIZE;
         esp_err_t err = animation_store_read(slot, record, &record_len);
         if (err == ESP_ERR_NVS_NOT_FOUND)
         {
@@ -199,20 +197,21 @@ static void handle_list(uint8_t corr)
             continue;
         }
 
-        // A record is written whole and validated first, so a mis-shaped one means
-        // corrupt flash rather than a bad request. Skip it rather than overrun.
-        uint16_t entry_len = record_len < STORE_RECORD_PREFIX_SIZE
-                                 ? 0
-                                 : STORE_RECORD_PREFIX_SIZE + record[STORE_ANIMATION_ID_SIZE];
-        if (entry_len == 0 || entry_len > record_len)
+        // A record is validated whole before it is written, so a mis-shaped one means
+        // corrupt flash. Bounding name_len by the same cap STORE enforces is what keeps
+        // the response within STORE_LIST_MAX_RESPONSE_SIZE.
+        uint8_t name_len = record_len < STORE_RECORD_PREFIX_SIZE ? 0 : record[STORE_ANIMATION_ID_SIZE];
+        if (name_len < STORE_NAME_MIN_BYTES || name_len > STORE_NAME_MAX_BYTES ||
+            record_len < STORE_RECORD_PREFIX_SIZE + name_len)
         {
-            ESP_LOGW(STORE_TAG, "Skipping slot %u in LIST: record is %u bytes", slot, record_len);
+            ESP_LOGW(STORE_TAG, "Skipping slot %u in LIST: %u byte record names %u bytes",
+                     slot, record_len, name_len);
             continue;
         }
 
         response[response_len++] = slot;
-        memcpy(&response[response_len], record, entry_len);
-        response_len += entry_len;
+        memcpy(&response[response_len], record, STORE_RECORD_PREFIX_SIZE + name_len);
+        response_len += STORE_RECORD_PREFIX_SIZE + name_len;
         entry_count++;
     }
 
@@ -227,17 +226,20 @@ static void handle_store(uint8_t corr, const uint8_t *payload, uint16_t payload_
     // Too large for the controller task's stack, and only that task gets here
     static custom_animation_t animation;
 
-    if (payload_len < STORE_REQUEST_PREFIX_SIZE)
+    if (payload_len < 1 + STORE_RECORD_PREFIX_SIZE)
     {
         ESP_LOGW(STORE_TAG, "STORE payload is %u bytes, too short for its prefix", payload_len);
         respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
         return;
     }
 
+    // The payload is a slot byte followed by the record that slot will hold verbatim
     uint8_t slot = payload[0];
-    uint8_t name_len = payload[STORE_REQUEST_PREFIX_SIZE - 1];
+    const uint8_t *record = &payload[1];
+    uint16_t record_len = payload_len - 1;
+    uint8_t name_len = record[STORE_ANIMATION_ID_SIZE];
 
-    if (payload_len < STORE_REQUEST_PREFIX_SIZE + name_len)
+    if (record_len < STORE_RECORD_PREFIX_SIZE + name_len)
     {
         ESP_LOGW(STORE_TAG, "STORE payload is %u bytes, too short for a %u byte name", payload_len, name_len);
         respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
@@ -252,15 +254,16 @@ static void handle_store(uint8_t corr, const uint8_t *payload, uint16_t payload_
     }
 
     // Runs before the animation validator so a bad name does not cost a deserialize
-    if (!name_is_valid(&payload[STORE_REQUEST_PREFIX_SIZE], name_len))
+    const uint8_t *name = &record[STORE_RECORD_PREFIX_SIZE];
+    if (!name_is_valid(name, name_len))
     {
         ESP_LOGW(STORE_TAG, "STORE into slot %u has an invalid %u byte name", slot, name_len);
         respond(corr, STORE_STATUS_INVALID_NAME, NULL, 0);
         return;
     }
 
-    const uint8_t *wire_format = &payload[STORE_REQUEST_PREFIX_SIZE + name_len];
-    uint16_t wire_format_len = payload_len - STORE_REQUEST_PREFIX_SIZE - name_len;
+    const uint8_t *wire_format = name + name_len;
+    uint16_t wire_format_len = record_len - STORE_RECORD_PREFIX_SIZE - name_len;
 
     // custom_animation_deserialize tolerates surplus bytes; persisting them would make
     // client and ears disagree about what was sent, permanently (S11.4)
@@ -281,8 +284,7 @@ static void handle_store(uint8_t corr, const uint8_t *payload, uint16_t payload_
         return;
     }
 
-    // The record is the request payload minus its slot byte
-    esp_err_t err = animation_store_write(slot, &payload[1], payload_len - 1);
+    esp_err_t err = animation_store_write(slot, record, record_len);
     if (err != ESP_OK)
     {
         respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
@@ -290,7 +292,7 @@ static void handle_store(uint8_t corr, const uint8_t *payload, uint16_t payload_
     }
 
     ESP_LOGI(STORE_TAG, "STORE: slot %u holds %u keyframes named '%.*s'",
-             slot, animation.keyframe_count, name_len, &payload[STORE_REQUEST_PREFIX_SIZE]);
+             slot, animation.keyframe_count, name_len, name);
     respond(corr, STORE_STATUS_OK, NULL, 0);
 }
 
