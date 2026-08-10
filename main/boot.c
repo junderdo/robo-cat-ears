@@ -11,6 +11,7 @@
 #include "nvs_flash.h"
 
 #include "boot.h"
+#include "animation_store.h"
 #include "ble.h"
 #include "led.h"
 #include "servo.h"
@@ -32,6 +33,10 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Initialize the animation store's own NVS partition
+    ESP_ERROR_CHECK(
+        animation_store_init());
 
     // Initialize BLE
     ESP_LOGI(ROBO_CAT_EARS_TAG, "Initializing BLE");
