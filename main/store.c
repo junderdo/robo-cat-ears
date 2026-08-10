@@ -13,6 +13,7 @@
 #include "store.h"
 #include "ble.h"
 #include "animation_store.h"
+#include "custom_animation.h"
 #include "types/ble_packet_types.h"
 #include "types/custom_animation_types.h"
 #include "types/store_types.h"
@@ -296,6 +297,106 @@ static void handle_store(uint8_t corr, const uint8_t *payload, uint16_t payload_
     respond(corr, STORE_STATUS_OK, NULL, 0);
 }
 
+/**
+ * @brief Read the slot index out of a DELETE or PLAY payload, which is exactly [slot:u8]
+ *
+ * Responds on rejection, so a false return means the request is already answered.
+ */
+static bool parse_slot_payload(uint8_t corr, const char *opcode_name,
+                               const uint8_t *payload, uint16_t payload_len, uint8_t *slot)
+{
+    if (payload_len != 1)
+    {
+        ESP_LOGW(STORE_TAG, "%s payload is %u bytes, not one slot byte", opcode_name, payload_len);
+        respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
+        return false;
+    }
+
+    if (payload[0] >= STORE_SLOT_COUNT)
+    {
+        ESP_LOGW(STORE_TAG, "%s of slot %u, beyond %d slots", opcode_name, payload[0], STORE_SLOT_COUNT);
+        respond(corr, STORE_STATUS_SLOT_OUT_OF_RANGE, NULL, 0);
+        return false;
+    }
+
+    *slot = payload[0];
+    return true;
+}
+
+static void handle_delete(uint8_t corr, const uint8_t *payload, uint16_t payload_len)
+{
+    uint8_t slot;
+    if (!parse_slot_payload(corr, "DELETE", payload, payload_len, &slot))
+    {
+        return;
+    }
+
+    // Idempotent by way of animation_store_delete: an already-empty slot is OK (S7.4)
+    esp_err_t err = animation_store_delete(slot);
+    if (err != ESP_OK)
+    {
+        respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
+        return;
+    }
+
+    ESP_LOGI(STORE_TAG, "DELETE: slot %u is empty", slot);
+    respond(corr, STORE_STATUS_OK, NULL, 0);
+}
+
+static void handle_play(uint8_t corr, const uint8_t *payload, uint16_t payload_len)
+{
+    // The controller task is the only caller, and both are too large for its stack
+    static uint8_t record[STORE_RECORD_MAX_SIZE];
+    static custom_animation_t animation;
+
+    uint8_t slot;
+    if (!parse_slot_payload(corr, "PLAY", payload, payload_len, &slot))
+    {
+        return;
+    }
+
+    uint16_t record_len = STORE_RECORD_MAX_SIZE;
+    esp_err_t err = animation_store_read(slot, record, &record_len);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGW(STORE_TAG, "PLAY of slot %u, which holds nothing", slot);
+        respond(corr, STORE_STATUS_SLOT_EMPTY, NULL, 0);
+        return;
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(STORE_TAG, "PLAY of slot %u failed to read: %s", slot, esp_err_to_name(err));
+        respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
+        return;
+    }
+
+    // A record is validated whole before it is written, so one that will not parse or
+    // deserialize now means corrupt flash rather than a bad request
+    uint8_t name_len = record_len < STORE_RECORD_PREFIX_SIZE ? 0 : record[STORE_ANIMATION_ID_SIZE];
+    if (record_len < STORE_RECORD_PREFIX_SIZE + name_len)
+    {
+        ESP_LOGE(STORE_TAG, "PLAY of slot %u: %u byte record names %u bytes", slot, record_len, name_len);
+        respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
+        return;
+    }
+
+    const uint8_t *wire_format = &record[STORE_RECORD_PREFIX_SIZE + name_len];
+    uint16_t wire_format_len = record_len - STORE_RECORD_PREFIX_SIZE - name_len;
+    if (!custom_animation_deserialize(wire_format, wire_format_len, &animation))
+    {
+        ESP_LOGE(STORE_TAG, "PLAY of slot %u: %u wire format bytes will not deserialize",
+                 slot, wire_format_len);
+        respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
+        return;
+    }
+
+    // Responding first is what makes OK mean accepted rather than finished (S7.5):
+    // custom_animation_play blocks this task for the animation's full duration
+    ESP_LOGI(STORE_TAG, "PLAY: slot %u, %u keyframes", slot, animation.keyframe_count);
+    respond(corr, STORE_STATUS_OK, NULL, 0);
+    custom_animation_play(&animation);
+}
+
 static void dispatch(uint8_t corr, uint8_t opcode, const uint8_t *payload, uint16_t payload_len)
 {
     switch (opcode)
@@ -308,6 +409,12 @@ static void dispatch(uint8_t corr, uint8_t opcode, const uint8_t *payload, uint1
         break;
     case STORE_OPCODE_STORE:
         handle_store(corr, payload, payload_len);
+        break;
+    case STORE_OPCODE_DELETE:
+        handle_delete(corr, payload, payload_len);
+        break;
+    case STORE_OPCODE_PLAY:
+        handle_play(corr, payload, payload_len);
         break;
     default:
         ESP_LOGW(STORE_TAG, "Unsupported sub-opcode 0x%02x (%u byte payload)", opcode, payload_len);

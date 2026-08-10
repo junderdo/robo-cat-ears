@@ -64,6 +64,38 @@ esp_err_t animation_store_write(uint8_t slot, const uint8_t *record, uint16_t re
     return ESP_OK;
 }
 
+esp_err_t animation_store_delete(uint8_t slot)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_from_partition(STORE_NVS_PARTITION, STORE_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(ANIMATION_STORE_TAG, "Failed to open NVS: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    char key[SLOT_KEY_SIZE];
+    slot_key(slot, key);
+
+    err = nvs_erase_key(handle, key);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        // Already empty, which is the state the caller asked for
+        nvs_close(handle);
+        return ESP_OK;
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(ANIMATION_STORE_TAG, "Failed to erase slot %u: %s", slot, esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(ANIMATION_STORE_TAG, "Erased slot %u", slot);
+    return ESP_OK;
+}
+
 esp_err_t animation_store_read(uint8_t slot, uint8_t *record, uint16_t *record_len)
 {
     nvs_handle_t handle;
