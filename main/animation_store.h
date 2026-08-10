@@ -47,4 +47,15 @@ esp_err_t animation_store_write(uint8_t slot, const uint8_t *record, uint16_t re
  */
 esp_err_t animation_store_read(uint8_t slot, uint8_t *record, uint16_t *record_len);
 
+/**
+ * @brief Empty a slot
+ *
+ * Idempotent: a slot that already holds nothing is ESP_OK, since occupancy is
+ * whether the slot's key exists.
+ *
+ * @param slot Slot index, 0..STORE_SLOT_COUNT-1
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t animation_store_delete(uint8_t slot);
+
 #endif // ANIMATION_STORE_H
