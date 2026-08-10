@@ -5,13 +5,16 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <stdbool.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 
 #include "store.h"
 #include "ble.h"
+#include "animation_store.h"
 #include "types/ble_packet_types.h"
+#include "types/custom_animation_types.h"
 #include "types/store_types.h"
 
 #define STORE_TAG "STORE"
@@ -91,12 +94,220 @@ static void respond_capability(uint8_t corr)
     respond(corr, STORE_STATUS_OK, record, sizeof(record));
 }
 
+// Bytes of a slot record that precede the name, i.e. [animation_id:16][name_len:1].
+// A STORE request payload is one slot byte followed by exactly such a record.
+#define STORE_RECORD_PREFIX_SIZE (STORE_ANIMATION_ID_SIZE + 1)
+
+/**
+ * @brief Whether a name is 1-32 bytes of well-formed UTF-8 with no control characters
+ */
+static bool name_is_valid(const uint8_t *name, uint8_t name_len)
+{
+    // The lowest code point each sequence length is allowed to encode, indexed by
+    // trailing-byte count. Anything below is an overlong encoding.
+    static const uint32_t shortest_encoding[] = {0, 0x80, 0x800, 0x10000};
+
+    if (name_len < STORE_NAME_MIN_BYTES || name_len > STORE_NAME_MAX_BYTES)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < name_len;)
+    {
+        uint8_t lead = name[i];
+        uint8_t trailing;
+        uint32_t code_point;
+
+        if (lead < 0x80)
+        {
+            if (lead < 0x20 || lead == 0x7f)
+            {
+                return false;
+            }
+            i++;
+            continue;
+        }
+        else if ((lead & 0xe0) == 0xc0)
+        {
+            trailing = 1;
+            code_point = lead & 0x1f;
+        }
+        else if ((lead & 0xf0) == 0xe0)
+        {
+            trailing = 2;
+            code_point = lead & 0x0f;
+        }
+        else if ((lead & 0xf8) == 0xf0)
+        {
+            trailing = 3;
+            code_point = lead & 0x07;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (i + trailing >= name_len)
+        {
+            return false;
+        }
+
+        for (uint8_t t = 1; t <= trailing; t++)
+        {
+            uint8_t byte = name[i + t];
+            if ((byte & 0xc0) != 0x80)
+            {
+                return false;
+            }
+            code_point = (code_point << 6) | (byte & 0x3f);
+        }
+
+        if (code_point < shortest_encoding[trailing] || code_point > 0x10ffff ||
+            (code_point >= 0xd800 && code_point <= 0xdfff))
+        {
+            return false;
+        }
+
+        i += trailing + 1;
+    }
+
+    return true;
+}
+
+static void handle_list(uint8_t corr)
+{
+    // The controller task is the only caller, and both are too large for its stack
+    static uint8_t response[STORE_LIST_MAX_RESPONSE_SIZE];
+    static uint8_t record[STORE_RECORD_MAX_SIZE];
+
+    uint8_t entry_count = 0;
+    uint16_t response_len = 1;
+
+    for (uint8_t slot = 0; slot < STORE_SLOT_COUNT; slot++)
+    {
+        uint16_t record_len = STORE_RECORD_MAX_SIZE;
+        esp_err_t err = animation_store_read(slot, record, &record_len);
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            continue;
+        }
+        if (err != ESP_OK)
+        {
+            ESP_LOGW(STORE_TAG, "Skipping slot %u in LIST: %s", slot, esp_err_to_name(err));
+            continue;
+        }
+
+        // A record is validated whole before it is written, so a mis-shaped one means
+        // corrupt flash. Bounding name_len by the same cap STORE enforces is what keeps
+        // the response within STORE_LIST_MAX_RESPONSE_SIZE.
+        uint8_t name_len = record_len < STORE_RECORD_PREFIX_SIZE ? 0 : record[STORE_ANIMATION_ID_SIZE];
+        if (name_len < STORE_NAME_MIN_BYTES || name_len > STORE_NAME_MAX_BYTES ||
+            record_len < STORE_RECORD_PREFIX_SIZE + name_len)
+        {
+            ESP_LOGW(STORE_TAG, "Skipping slot %u in LIST: %u byte record names %u bytes",
+                     slot, record_len, name_len);
+            continue;
+        }
+
+        response[response_len++] = slot;
+        memcpy(&response[response_len], record, STORE_RECORD_PREFIX_SIZE + name_len);
+        response_len += STORE_RECORD_PREFIX_SIZE + name_len;
+        entry_count++;
+    }
+
+    response[0] = entry_count;
+
+    ESP_LOGI(STORE_TAG, "LIST: %u of %d slots occupied, %u bytes", entry_count, STORE_SLOT_COUNT, response_len);
+    respond(corr, STORE_STATUS_OK, response, response_len);
+}
+
+static void handle_store(uint8_t corr, const uint8_t *payload, uint16_t payload_len)
+{
+    // Too large for the controller task's stack, and only that task gets here
+    static custom_animation_t animation;
+
+    if (payload_len < 1 + STORE_RECORD_PREFIX_SIZE)
+    {
+        ESP_LOGW(STORE_TAG, "STORE payload is %u bytes, too short for its prefix", payload_len);
+        respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
+        return;
+    }
+
+    // The payload is a slot byte followed by the record that slot will hold verbatim
+    uint8_t slot = payload[0];
+    const uint8_t *record = &payload[1];
+    uint16_t record_len = payload_len - 1;
+    uint8_t name_len = record[STORE_ANIMATION_ID_SIZE];
+
+    if (record_len < STORE_RECORD_PREFIX_SIZE + name_len)
+    {
+        ESP_LOGW(STORE_TAG, "STORE payload is %u bytes, too short for a %u byte name", payload_len, name_len);
+        respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
+        return;
+    }
+
+    if (slot >= STORE_SLOT_COUNT)
+    {
+        ESP_LOGW(STORE_TAG, "STORE into slot %u, beyond %d slots", slot, STORE_SLOT_COUNT);
+        respond(corr, STORE_STATUS_SLOT_OUT_OF_RANGE, NULL, 0);
+        return;
+    }
+
+    // Runs before the animation validator so a bad name does not cost a deserialize
+    const uint8_t *name = &record[STORE_RECORD_PREFIX_SIZE];
+    if (!name_is_valid(name, name_len))
+    {
+        ESP_LOGW(STORE_TAG, "STORE into slot %u has an invalid %u byte name", slot, name_len);
+        respond(corr, STORE_STATUS_INVALID_NAME, NULL, 0);
+        return;
+    }
+
+    const uint8_t *wire_format = name + name_len;
+    uint16_t wire_format_len = record_len - STORE_RECORD_PREFIX_SIZE - name_len;
+
+    // custom_animation_deserialize tolerates surplus bytes; persisting them would make
+    // client and ears disagree about what was sent, permanently (S11.4)
+    if (wire_format_len < 1 ||
+        wire_format_len != 1 + (uint16_t)wire_format[0] * CUSTOM_ANIMATION_KEYFRAME_SIZE)
+    {
+        ESP_LOGW(STORE_TAG, "STORE into slot %u has %u wire format bytes, not the exact length",
+                 slot, wire_format_len);
+        respond(corr, STORE_STATUS_MALFORMED_REQUEST, NULL, 0);
+        return;
+    }
+
+    // The same gate stream-and-play uses, so both accept exactly the same animations (S9.3)
+    if (!custom_animation_deserialize(wire_format, wire_format_len, &animation))
+    {
+        ESP_LOGW(STORE_TAG, "STORE into slot %u failed to deserialize", slot);
+        respond(corr, STORE_STATUS_INVALID_ANIMATION, NULL, 0);
+        return;
+    }
+
+    esp_err_t err = animation_store_write(slot, record, record_len);
+    if (err != ESP_OK)
+    {
+        respond(corr, STORE_STATUS_STORAGE_FAILURE, NULL, 0);
+        return;
+    }
+
+    ESP_LOGI(STORE_TAG, "STORE: slot %u holds %u keyframes named '%.*s'",
+             slot, animation.keyframe_count, name_len, name);
+    respond(corr, STORE_STATUS_OK, NULL, 0);
+}
+
 static void dispatch(uint8_t corr, uint8_t opcode, const uint8_t *payload, uint16_t payload_len)
 {
     switch (opcode)
     {
     case STORE_OPCODE_CAPABILITY:
         respond_capability(corr);
+        break;
+    case STORE_OPCODE_LIST:
+        handle_list(corr);
+        break;
+    case STORE_OPCODE_STORE:
+        handle_store(corr, payload, payload_len);
         break;
     default:
         ESP_LOGW(STORE_TAG, "Unsupported sub-opcode 0x%02x (%u byte payload)", opcode, payload_len);

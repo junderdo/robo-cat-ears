@@ -10,6 +10,8 @@
 
 #include <stdint.h>
 
+#include "types/custom_animation_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,43 @@ extern "C" {
  * @brief Number of animation slots, indices 0..STORE_SLOT_COUNT-1
  */
 #define STORE_SLOT_COUNT 16
+
+/**
+ * @brief NVS partition holding the store, separate from the bond database in `nvs`
+ */
+#define STORE_NVS_PARTITION "anim"
+
+/**
+ * @brief NVS namespace holding one blob per slot, keyed by decimal slot index
+ */
+#define STORE_NVS_NAMESPACE "anim"
+
+/**
+ * @brief Bytes of an animation_id: the web app's Animation.id, all-zero if watch-authored
+ */
+#define STORE_ANIMATION_ID_SIZE 16
+
+/**
+ * @brief Bounds on a name, counted in UTF-8 bytes
+ */
+#define STORE_NAME_MIN_BYTES 1
+#define STORE_NAME_MAX_BYTES 32
+
+/**
+ * @brief Size of a worst-case slot record
+ *
+ * [animation_id:16][name_len:1][name:32][wire_format:769]
+ */
+#define STORE_RECORD_MAX_SIZE \
+    (STORE_ANIMATION_ID_SIZE + 1 + STORE_NAME_MAX_BYTES + CUSTOM_ANIMATION_MAX_SERIALIZED_SIZE)
+
+/**
+ * @brief Size of a worst-case LIST response
+ *
+ * [entry_count:1] then, per occupied slot, [index:1][animation_id:16][name_len:1][name:32]
+ */
+#define STORE_LIST_MAX_RESPONSE_SIZE \
+    (1 + STORE_SLOT_COUNT * (1 + STORE_ANIMATION_ID_SIZE + 1 + STORE_NAME_MAX_BYTES))
 
 /**
  * @brief Bytes of frame header, both directions:
@@ -42,7 +81,7 @@ extern "C" {
  *
  * [slot:1][animation_id:16][name_len:1][name:32][wire_format:769]
  */
-#define STORE_REQUEST_MAX_PAYLOAD_SIZE 819
+#define STORE_REQUEST_MAX_PAYLOAD_SIZE (1 + STORE_RECORD_MAX_SIZE)
 
 /**
  * @brief Largest frame the ears will ever send, bounding max_chunk_bytes
