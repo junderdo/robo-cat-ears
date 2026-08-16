@@ -378,16 +378,22 @@ store command.
   the target, so it must know what is occupied.
 
 Clients **cache these for the connection and re-read them on every reconnect**. Neither is persisted
-across sessions. A cached list must be **tagged with the device address it came from and discarded on
-sight if a new connection's address differs** — stale slot indices from device A silently playing
-slots on device B is the most dangerous state a client can reach.
+across sessions. A cached list must be **tagged with the client's own stable identifier for the device
+it came from, and discarded on sight if a new connection's identifier differs** — stale slot indices
+from device A silently playing slots on device B is the most dangerous state a client can reach.
+
+The identifier is whatever the client platform provides: `BluetoothDevice.id` on the web, the
+reconnect handle on the watch. **Not the serial** (§8): the serial is optional, so tagging with it
+would leave every pre-serial device untagged — the one population where the rule is most likely to be
+exercised. This previously said "the device address", which named a value no client can see; Web
+Bluetooth hides the MAC, and that wording made the rule read as unimplementable when it never was.
 
 ---
 
 ## 7. Sub-opcodes
 
 ```
-0x01 CAPABILITY     req: --                        resp: [version:u8][slot_count:u8][max_chunk_bytes:u16]
+0x01 CAPABILITY     req: --                        resp: [version:u8][slot_count:u8][max_chunk_bytes:u16][serial:6]
 0x02 LIST           req: --                        resp: [entry_count:u8] then entries, ascending by index:
                                                          [index:u8][animation_id:16][name_len:u8][name]
 0x03 STORE          req: [slot:u8][animation_id:16][name_len:u8][name][wire_format]   resp: --
@@ -542,29 +548,44 @@ are reserved values rather than declared impossible.
 ## 8. The capability record and version rules
 
 ```
-[protocol_version:u8][slot_count:u8][max_chunk_bytes:u16]
+[protocol_version:u8][slot_count:u8][max_chunk_bytes:u16][serial:6]
 ```
 
 Fetched as a **sub-opcode, not a plain GATT read** — there is no spare characteristic, since `ABF2`'s
 value attribute is already occupied by lighting reads.
 
-**Initial value: `protocol_version = 1`.**
+**Initial value: `protocol_version = 1`.** The serial was appended without bumping it; see the
+extensibility rule below.
 
-**Principle: transmit what varies at runtime, document what the version fixes.**
+**Principle: transmit what the client cannot derive from this document and the protocol version;
+document everything else.**
 
 | Field | Why it is on the wire |
 | --- | --- |
 | `max_chunk_bytes` | Varies with the negotiated MTU. Computed as `MTU - 3` (`spp_mtu_size`, `main/ble.c:648`). **Never the 512 API cap** — see §1.4. |
 | `slot_count` | Varies with build and partition size. Clients **must not hardcode it**; slot indices are `0..slot_count-1`, and out-of-range gets a distinct status, never a clamp. |
+| `serial` | Per-unit identity. Unknowable to any client by construction — Web Bluetooth hides the MAC, and this document cannot state a value that differs per unit. See §8.1. |
 
 Fixed by the protocol version and deliberately **absent** from the wire: `max_keyframes` (64),
-`max_name_bytes` (32), and the maximum animation size (769 B). Putting them on the wire would invent
+`max_name_bytes` (32), and the maximum animation size (769 B). Those are knowable — *this document
+states them and the version fixes them* — which is exactly why putting them on the wire would invent
 a way for the device to contradict its own spec.
+
+(The principle used to read "transmit what varies at runtime". That was a proxy for knowability which
+happened to coincide on the only two fields that then existed. The serial varies neither at runtime
+nor by version, and is the first field to separate them.)
 
 **Extensibility rule: clients MUST ignore trailing bytes they do not understand.** Appending a field
 is then non-breaking, which is what reserves the version byte for changes that genuinely break.
 Additive changes do not bump the version at all — they are absorbed by this rule and by
 `UNSUPPORTED_OPCODE`.
+
+**An appended field is fixed-width. Optionality is expressed by a reserved value, never by omitting
+the field.** Omission would make the record's length non-monotone — legal lengths of 4, 6, 10, 12 once
+anything further is appended — and a client could then no longer locate any field by offset, because
+offsets would depend on whether an *earlier optional* field had been emitted. The first optional field
+to be omitted rather than reserved is the last optional field the record can ever have. `LIST` already
+follows this rule: an all-zero `animation_id` means watch-authored (§7.2).
 
 **Version semantics: `u8`, bumped only on breaking changes, and the client refuses rather than
 degrades.** Outside the known range, the client disconnects and tells the user which side is stale.
@@ -576,6 +597,43 @@ controlled: the web app updates on reload, the ears are flashable.
 brick built-in `0x01` playback on an un-updated watch, because a version refusal is a hard
 disconnect, not a partial degrade. A half-working connection is exactly the degrading the version
 byte forbids.
+
+### 8.1 `serial`
+
+Six bytes, appended last, raw — **not hex on the wire.** ASCII hex would double the bytes and put a
+hex encoder in firmware; every client that wants hex is formatting for display and can encode it
+itself.
+
+**Derivation:** `SHA-256("milklab-ears-serial-v1" ‖ factory eFuse MAC)`, truncated to the first six
+bytes. The MAC is `esp_efuse_mac_get_default` — the factory eFuse MAC, **not** `esp_read_mac` with
+`ESP_MAC_BT`, which carries a target-dependent offset and follows `esp_base_mac_addr_set`. Six digest
+bytes match the 48-bit width of the input, so the truncation discards no resolution the MAC ever had.
+
+**Presence is a length check, never a version check:**
+
+```
+serial present  ⟺  payload.length >= 10  and  bytes 4..9 are not all zero
+```
+
+- **All-zero is reserved** and means "this device cannot tell you its serial" — the eFuse read failed.
+  It is never a legal serial. Clients must reject it *at the parse boundary*: all-zero renders as the
+  perfectly well-formed hex string `000000000000`, so a zero that escapes the parser becomes a serial
+  that every failed unit in the fleet shares.
+- **4 bytes** is pre-serial firmware.
+- **5–9 bytes** is read as no serial. No legal firmware can emit it — the serial's offset and width are
+  fixed — so it is a bench bug, and the extensibility rule already covers it: those are trailing bytes
+  the client cannot interpret.
+- **Under 4 bytes** remains the only length that is rejected outright.
+
+Clients that distinguish the 4-byte and all-zero cases to the user should say different things. The
+first is fixed by updating firmware; the second is not, and telling that user to update sends them on
+an errand that cannot succeed.
+
+**The derivation is frozen once any client persists a serial.** Changing the domain string, the hash,
+or the truncation width makes every existing unit report a *different* serial after a firmware update,
+orphaning every record keyed to the old one. The `v1` in the domain string is domain separation, not
+an upgrade path — treat it as decorative. If this ever must change, it is a migration for every
+consumer, not a firmware bump.
 
 ---
 
@@ -659,7 +717,7 @@ With `max_chunk_bytes = MTU - 3 = 509` and a 5-byte header, **504 payload bytes 
 
 | Message | Worst case | Frames |
 | --- | --- | --- |
-| `CAPABILITY` request / response | 5 / 9 bytes | 1 / 1 |
+| `CAPABILITY` request / response | 5 / 15 bytes | 1 / 1 |
 | `LIST` response | `1 + 16 * (1 + 16 + 1 + 32)` = **801 B** | **2** |
 | `STORE` request | `1 + 16 + 1 + 32 + (1 + 64 * 12)` = **819 B** | **2** |
 | `DELETE` / `PLAY` request | 1 byte payload | 1 |
@@ -741,6 +799,23 @@ Distinct from `custom_animation_buffer` (769 B) in `main/controller.c`. See §10
 (`main/types/ble_packet_types.h`). `0x06` must be accepted, reassembled generically at the transport
 layer (§5), and dispatched on its sub-opcode only once complete.
 
+### 11.8 The device serial
+
+Nothing in `main/` reads eFuse or hashes anything today. `respond_capability` (`main/store.c:92`)
+gains the §8.1 derivation, six bytes longer.
+
+Three things that are not obvious from the record layout:
+
+- **`mbedtls` must be added to `main`'s `PRIV_REQUIRES`.** It links today only transitively via `bt`,
+  and `MINIMAL_BUILD ON` makes that an accident rather than a guarantee. Relying on it is how this
+  becomes a link error on someone else's build.
+- **The read is cheap and needs no init.** `esp_efuse_mac_get_default` bottoms out in a memory-mapped
+  register read — no flash, no NVS, no lock, no radio — and is correct before `esp_bt_controller_init`.
+  `mbedtls_sha256_init` is a `memset`. `CAPABILITY` can answer without pre-computing anything, though
+  computing the serial once at boot is equally fine.
+- **Handle the error rather than assuming success.** On a failed read, emit six zero bytes (§8.1) —
+  never a partial record, and never a made-up value.
+
 ---
 
 ## 12. Client flows
@@ -752,8 +827,8 @@ layer (§5), and dispatched on its sub-opcode only once complete.
 3. **Subscribe to `ABF2`.**
 4. `CAPABILITY`. If `protocol_version` is outside the known range, **disconnect and say which side is
    stale** (§8). Do not proceed.
-5. `LIST`. Cache the entries, `slot_count` and `max_chunk_bytes` for the connection, **tagged with
-   the device address**.
+5. `LIST`. Cache the entries, `slot_count` and `max_chunk_bytes` for the connection, **tagged with the
+   client's own stable identifier for the device** (§6) — not the serial, which is optional.
 
 Every GATT operation is serialized **app-wide** — one in flight at a time across the whole client,
 not per characteristic. Concurrent Web Bluetooth operations may reject with `NetworkError`; Blink has
@@ -793,10 +868,12 @@ Neither of these is part of the wire contract; they are recorded here so an impl
 can see what the other assumes.
 
 - **The watch is play-only.** It implements the connect sequence, `LIST` and `PLAY`, and nothing
-  else — no `STORE`, no `DELETE`. It caches the list in RAM tagged with the device address, fetches
-  once on connect rather than on every screen entry, dims rather than clears its buttons on
-  disconnect, and discards the cache outright when connecting to a *different* device. The full
-  screen design is on the *Decide: watch animate screen as a pure client* card.
+  else — no `STORE`, no `DELETE`. It caches the list in RAM tagged with its own device handle (§6),
+  fetches once on connect rather than on every screen entry, dims rather than clears its buttons on
+  disconnect, and discards the cache outright when connecting to a *different* device. It has no use
+  for the serial and ignores it: `onCapabilityResponse` guards on `_rx_length < 4` — a minimum, not an
+  equality — so the longer record needs no watch change at all. The full screen design is on the
+  *Decide: watch animate screen as a pure client* card.
 - **The web app is the manager.** Connecting is a global header chip; uploading is a dialog showing
   all `slot_count` real slots. It implements `STORE`, `DELETE` and `PLAY`, defaults the target to the
   slot already holding this `animation_id` (else the first free one), confirms overwrites inline, and
