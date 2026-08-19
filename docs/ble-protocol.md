@@ -635,6 +635,12 @@ orphaning every record keyed to the old one. The `v1` in the domain string is do
 an upgrade path — treat it as decorative. If this ever must change, it is a migration for every
 consumer, not a firmware bump.
 
+**Why the serial is what it is** — the factory MAC over the BLE MAC, SHA-256 over the alternatives, six
+bytes over four or eight, and what the value deliberately does *not* promise — is recorded in
+`milk-lab-creations/docs/adr/0002-how-a-pair-of-ears-is-identified.md`. That ADR owns the identity
+semantics; this section owns the bytes. The freeze above is stated in both on purpose: the reader most
+likely to improve a hash is the one least likely to follow a link out of the repository they are in.
+
 ---
 
 ## 9. Status codes
