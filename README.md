@@ -98,8 +98,19 @@ values
 ## Host tests
 
 ```bash
-make -C test          # fixture drift check, then the host tests (gcc + python3, no ESP-IDF)
+make -C test          # fixture drift check, then the host tests (gcc + python3 + libcrypto, no ESP-IDF)
 make -C test test     # host tests alone, without the drift check
+```
+
+`test/device_serial_conformance.c` pins the frozen serial derivation (`docs/ble-protocol.md` S8.1)
+to vectors that `test/gen_serial_vectors.py` computes from the spec with `hashlib`, so the two are
+independent implementations rather than one checking itself. It compiles `main/device_serial.c`
+against the stand-ins in `test/host/`, which supply the eFuse read and SHA-256 off-target - hence
+the OpenSSL `libcrypto` dependency. To check a real unit at the bench, derive its serial from its
+factory MAC and compare against the last six bytes of its `CAPABILITY` response:
+
+```bash
+python3 test/gen_serial_vectors.py --mac 84:fc:e6:00:11:22
 ```
 
 `test/wire_format_conformance.c` pins `custom_animation_serialize` / `custom_animation_deserialize`

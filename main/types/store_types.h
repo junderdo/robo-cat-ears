@@ -94,7 +94,7 @@ extern "C" {
  * @brief Sub-opcodes, carried in the first header byte after corr
  */
 typedef enum {
-    STORE_OPCODE_CAPABILITY = 0x01,    /*!< Report protocol version, slot count, max chunk bytes */
+    STORE_OPCODE_CAPABILITY = 0x01,    /*!< Report protocol version, slot count, max chunk bytes, serial */
     STORE_OPCODE_LIST = 0x02,          /*!< List occupied slots */
     STORE_OPCODE_STORE = 0x03,         /*!< Write an animation to a slot */
     STORE_OPCODE_DELETE = 0x04,        /*!< Empty a slot */

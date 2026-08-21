@@ -12,6 +12,7 @@
 
 #include "store.h"
 #include "ble.h"
+#include "device_serial.h"
 #include "animation_store.h"
 #include "custom_animation.h"
 #include "types/ble_packet_types.h"
@@ -89,18 +90,25 @@ static bool respond(uint8_t corr, store_status_t status, const uint8_t *payload,
     return true;
 }
 
+// [protocol_version:1][slot_count:1][max_chunk_bytes:2], then the serial (S8).
+#define STORE_CAPABILITY_SERIAL_OFFSET 4
+#define STORE_CAPABILITY_RECORD_SIZE (STORE_CAPABILITY_SERIAL_OFFSET + DEVICE_SERIAL_SIZE)
+
 static void respond_capability(uint8_t corr)
 {
     uint16_t chunk_bytes = max_chunk_bytes();
-    const uint8_t record[] = {
-        STORE_PROTOCOL_VERSION,
-        STORE_SLOT_COUNT,
-        (uint8_t)(chunk_bytes >> 8),
-        (uint8_t)(chunk_bytes & 0xff),
-    };
+    uint8_t record[STORE_CAPABILITY_RECORD_SIZE];
 
-    ESP_LOGI(STORE_TAG, "CAPABILITY: version %d, %d slots, %u max chunk bytes",
-             STORE_PROTOCOL_VERSION, STORE_SLOT_COUNT, chunk_bytes);
+    record[0] = STORE_PROTOCOL_VERSION;
+    record[1] = STORE_SLOT_COUNT;
+    record[2] = (uint8_t)(chunk_bytes >> 8);
+    record[3] = (uint8_t)(chunk_bytes & 0xff);
+    uint8_t *serial = &record[STORE_CAPABILITY_SERIAL_OFFSET];
+    device_serial_get(serial);
+
+    ESP_LOGI(STORE_TAG, "CAPABILITY: version %d, %d slots, %u max chunk bytes, serial %02x%02x%02x%02x%02x%02x",
+             STORE_PROTOCOL_VERSION, STORE_SLOT_COUNT, chunk_bytes,
+             serial[0], serial[1], serial[2], serial[3], serial[4], serial[5]);
     respond(corr, STORE_STATUS_OK, record, sizeof(record));
 }
 
