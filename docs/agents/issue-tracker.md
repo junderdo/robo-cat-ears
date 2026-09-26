@@ -54,6 +54,10 @@ Cards are the unit of work; the description is the issue body. The established s
 
 <title of the parent spec/map card> — <its trello.com/c/... URL>
 
+## Repo
+
+<which repo this card lands in, and its role>
+
 ## What to build
 
 <prose: the observable behavior this card delivers>
@@ -71,6 +75,11 @@ Cards are the unit of work; the description is the issue body. The established s
 Keep `## Parent` and `## Blocked by` even when empty — they're what makes the board navigable
 without opening every card. ["The device serial: CAPABILITY grows six
 bytes…"](https://trello.com/c/zLXcwgXy) is the worked example.
+
+**`## Repo` is not optional on a card a skill creates.** One board serves this firmware, the watch
+app, the web app and the physical build, so a card that doesn't name its repo is ambiguous before it
+is anything else. Name the repo and what it is in the system ("`robo-cat-ears` - the ears firmware,
+the GATT server").
 
 **`## Parent` may point out of Trello.** Cross-repo work is normal here, and the parent of a firmware
 card is often a spec or ADR in `milk-lab-creations` rather than a map card on this board. Name the
