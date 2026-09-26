@@ -59,41 +59,11 @@ commits to and review holds to:
 
 ## Issue tracking (Trello)
 
-Issues for this project are tracked on the **Robo Cat Ears** Trello board
-(<https://trello.com/b/DHDPlEuL/robo-cat-ears>) using the `trello` CLI (npm package `trello-cli`,
-installed globally).
+Issues for this project are cards on the **Robo Cat Ears** Trello board, managed with the `trello`
+CLI. Before reading, creating, moving or labelling a card, read `docs/agents/issue-tracker.md` —
+it holds the workflow, card body shape, required labels, and the CLI's sharp edges.
 
-The board's lists are **Backlog**, **Todo**, **In Progress**, **Ready for Review**, and **Done**.
-
-### Common commands
-
-```bash
-trello list:list --board "Robo Cat Ears"                    # show the board's lists
-trello card:list --board "Robo Cat Ears" --list "Todo"      # list cards in a list
-trello card:get-by-id --id <card-id>                        # read a card in full
-trello card:create --board "Robo Cat Ears" --list "Todo" -n "Card title" --description "Details"
-trello card:move --board "Robo Cat Ears" --list "Todo" --card "Card title" --to "In Progress"
-trello search --query "some text" --board "Robo Cat Ears"   # search cards
-```
-
-Run `trello <topic> --help` (e.g. `trello card --help`) to discover subcommands. Card body shape,
-label handling, wayfinder conventions, and the CLI's sharp edges are in
-`docs/agents/issue-tracker.md`.
-
-### Workflow
-
-- New bugs/ideas/tasks go in **Todo** as cards; **Backlog** holds what isn't queued yet.
-- Move a card to **In Progress** when work starts, **Ready for Review** when a PR is open, **Done**
-  when it lands.
-- Reference the card title in related commit messages when it makes sense.
-- The board covers the whole product, not just this repo — plenty of cards are watch app, PCB, or
-  3D-print work. Check what a card is actually about before assuming it lands here.
-
-### Auth
-
-Credentials are stored in `~/.trello-cli/` (set up once via `trello auth:api-key <key>` and
-`trello auth:token <token>`; key/token come from <https://trello.com/power-ups/admin>). If a command
-fails with an auth error, ask the user to re-authenticate — do not attempt to fetch tokens yourself.
+Reference the card title in related commit messages when it makes sense.
 
 ## Agent skills
 

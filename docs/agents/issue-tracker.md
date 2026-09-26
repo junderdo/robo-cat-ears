@@ -6,7 +6,8 @@ Issues, tasks, and specs (you may know a spec as a PRD) for this repo live as **
 workflow here — the GitHub remote is for code and pull requests only.
 
 The board's lists are **Backlog**, **Todo**, **In Progress**, **Ready for Review**, and **Done**.
-List position carries workflow state; labels carry triage role and wayfinder type.
+List position carries workflow state; labels carry triage role and wayfinder type. New cards go in
+**Todo**; **Backlog** holds what isn't queued yet.
 
 **The board is the whole product, not this repo.** Cards cover the ears firmware, the
 `robo-cat-ears-watch` app, the web authoring app, the PCB, and the 3D-printed hardware alike. Read
@@ -17,9 +18,9 @@ what a card actually asks for before assuming it is a firmware change.
 Almost every command needs `--board "Robo Cat Ears"` plus the `--list` the card currently sits in.
 Add `--format json` to any command when you need to parse the output.
 
-- **Create a card**: `trello card:create --board "Robo Cat Ears" --list "Todo" -n "Title" --description "..."`.
-  Use a heredoc or a `$(cat file)` for multi-line descriptions. Optional: `--label <name>` (repeatable),
-  `--due <date>`, `--position top|bottom`.
+- **Create a card**: `trello card:create --board "Robo Cat Ears" --list "Todo" -n "Title" --description "..." --label "ears-firmware"`.
+  Use a heredoc or a `$(cat file)` for multi-line descriptions. Optional: more `--label <name>`
+  (repeatable), `--due <date>`, `--position top|bottom`.
 - **List cards**: `trello card:list --board "Robo Cat Ears" --list "Todo"` — prints `Name (ID: ...)`
   per card. This is the way to get a card's ID.
 - **Read a card**: `trello card:get-by-id --id <card-id>` — the most reliable read, since it needs no
@@ -32,7 +33,8 @@ Add `--format json` to any command when you need to parse the output.
 - **Assign**: `trello card:assign --board "Robo Cat Ears" --list "<list>" --card "<title>" --user <username>`.
   The username must be a real Trello username (`jeffreyunderdown`) — `--user me` fails with a 400.
   Confusingly, `trello card:assigned-to --user me` *does* work; `me` is that command's default.
-- **Move between lists** (this is how state changes): `trello card:move --board "Robo Cat Ears" --list "Todo" --card "<title>" --to "In Progress"`
+- **Move between lists** (this is how state changes): `trello card:move --board "Robo Cat Ears" --list "Todo" --card "<title>" --to "In Progress"`.
+  Move a card to **In Progress** when work starts.
 - **Close**: move the card to **Done**. A card whose PR is open but unmerged belongs in **Ready for
   Review**, not Done. Reserve `trello card:archive` for cards that were mistakes or duplicates — a
   card that got built belongs in Done, not archived.
@@ -81,6 +83,11 @@ app, the web app and the physical build, so a card that doesn't name its repo is
 is anything else. Name the repo and what it is in the system ("`robo-cat-ears` - the ears firmware,
 the GATT server").
 
+**Every card created for this repo carries the `ears-firmware` label**, whoever creates it. The
+`## Repo` section tells a reader where a card lands; the label lets the board be filtered by it.
+Pass `--label "ears-firmware"` at create time, or `trello card:label` it afterwards. If
+`trello label:list` doesn't show it, create it once rather than skipping it.
+
 **`## Parent` may point out of Trello.** Cross-repo work is normal here, and the parent of a firmware
 card is often a spec or ADR in `milk-lab-creations` rather than a map card on this board. Name the
 file path when that's the case, and link the web app's map card alongside it if one exists.
@@ -91,7 +98,8 @@ retrofit onto the backlog.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a card in **Todo** with `trello card:create`, using the body shape above.
+Create a card in **Todo** with `trello card:create`, using the body shape above and the
+`ears-firmware` label.
 
 ## When a skill says "fetch the relevant ticket"
 
@@ -105,7 +113,7 @@ this board has five.
 Used by `/wayfinder`. The **map** is a card with one **child** card per ticket.
 
 - **Map**: a card labelled `wayfinder:map` whose description holds the Notes / Decisions-so-far / Fog
-  body. Create with `trello card:create --board "Robo Cat Ears" --list "Todo" -n "Spec: <effort>" --label "wayfinder:map"`.
+  body. Create with `trello card:create --board "Robo Cat Ears" --list "Todo" -n "Spec: <effort>" --label "wayfinder:map" --label "ears-firmware"`.
 - **Child ticket**: its own card in **Todo**, labelled `wayfinder:<type>`
   (`research` / `prototype` / `grilling` / `task`), with `## Parent` in the description linking the
   map card's URL. Trello has no native parent/child, and the CLI cannot populate a checklist, so
@@ -172,5 +180,7 @@ Used by `/wayfinder`. The **map** is a card with one **child** card per ticket.
 - **The name→ID cache is local SQLite** (`~/.trello-cli/default/trello.db`). If a board or list was
   renamed and the CLI reports it "not found" even though `board:list` shows it, the cache is stale —
   run `trello sync`.
-- **Auth failures are the user's to fix.** Credentials live in `~/.trello-cli/`. If a command fails
-  with an auth error, ask the user to re-authenticate; never attempt to fetch tokens yourself.
+- **Auth failures are the user's to fix.** Credentials live in `~/.trello-cli/`, set up once with
+  `trello auth:api-key <key>` and `trello auth:token <token>` (key and token from
+  <https://trello.com/power-ups/admin>). If a command fails with an auth error, ask the user to
+  re-authenticate; never attempt to fetch tokens yourself.
