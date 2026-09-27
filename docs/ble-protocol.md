@@ -1,13 +1,14 @@
 # Robo Cat Ears BLE protocol
 
 The ears are the BLE peripheral and the GATT **server**. Everything a client can ask of them goes
-through one service, `0xABF0`. This document is the contract between three repositories:
+through one service, `0xABF0`. This document is the contract between four repositories:
 
 | Repo | Role |
 | --- | --- |
 | `robo-cat-ears` | firmware, GATT server, **owner of record** for this document |
 | `robo-cat-ears-watch` | firmware, BLE client — play-only |
 | `milk-lab-creations` | SvelteKit web app, BLE client over Web Bluetooth — the authoring tool |
+| `robo-cat-ears-app` | Flutter phone app for Android and iOS, BLE client — play-only |
 
 Two halves, and the split is load-bearing:
 
@@ -590,7 +591,7 @@ follows this rule: an all-zero `animation_id` means watch-authored (§7.2).
 **Version semantics: `u8`, bumped only on breaking changes, and the client refuses rather than
 degrades.** Outside the known range, the client disconnects and tells the user which side is stale.
 Degrading requires the client to know what changed in a version it has never seen — it cannot; that
-is guessing. Refusing is only unkind when you do not control both ends, and all three repos are
+is guessing. Refusing is only unkind when you do not control both ends, and all four repos are
 controlled: the web app updates on reload, the ears are flashable.
 
 **Accepted cost, stated plainly:** a firmware bump that touches only the `0x06` surface will still
@@ -828,7 +829,8 @@ Three things that are not obvious from the record layout:
 
 ### 12.1 Connect
 
-1. `requestDevice` (web) or reconnect to the last address (watch), then `connect()`.
+1. `requestDevice` (web), reconnect to the last address (watch), or reconnect to the last ears or
+   scan (phone), then `connect()`.
 2. Discover `0xABF0`, get `ABF1` and `ABF2`.
 3. **Subscribe to `ABF2`.**
 4. `CAPABILITY`. If `protocol_version` is outside the known range, **disconnect and say which side is
@@ -870,8 +872,8 @@ that something failed (§7.5).
 
 ### 12.5 Client-specific behaviour
 
-Neither of these is part of the wire contract; they are recorded here so an implementer of one repo
-can see what the other assumes.
+None of these is part of the wire contract; they are recorded here so an implementer of one repo
+can see what the others assume.
 
 - **The watch is play-only.** It implements the connect sequence, `LIST` and `PLAY`, and nothing
   else — no `STORE`, no `DELETE`. It caches the list in RAM tagged with its own device handle (§6),
@@ -886,8 +888,16 @@ can see what the other assumes.
   makes the device-side name editable at upload because the web name allows 100 characters against
   the device's 32 bytes. Full rationale in
   `milk-lab-creations/docs/adr/0001-web-app-connect-and-upload-ux.md`.
+- **The phone is play-only, like the watch.** It implements the connect sequence, `LIST` and `PLAY`.
+  It tags its cache with its own key for the ears: the address on Android, but a per-phone UUID
+  on iOS, which never exposes an address. The serial is the only identifier it shares with other
+  clients. iOS chooses its own MTU, so the phone chunks by `max_chunk_bytes` and never issues a long
+  write (§1.4). It holds the ears only while in the foreground, so the watch can take them
+  whenever the phone is in the background. Full rationale in
+  `milk-lab-creations/docs/adr/0003-a-native-phone-app-is-a-supported-client.md` and
+  `robo-cat-ears-app/docs/adrs/0001-phone-holds-the-ears-only-in-the-foreground.md`.
 
-**The ears own the store, the web app manages it, the watch plays from it.**
+**The ears own the store, the web app manages it, the watch and the phone play from it.**
 
 ---
 
@@ -897,7 +907,8 @@ Ruled out of scope for this contract, recorded so nobody re-litigates them by ac
 
 - **Redesigning the one-byte-type multiplexing.** Adding the WRITE bit to `ABF1` is not a redesign.
 - **Concurrent multi-client connections and live change notification.**
-- **iOS support and a native phone app.** All iOS browsers use WKWebView, which has no Web Bluetooth.
+- **The web app on iOS.** All iOS browsers use WKWebView, which has no Web Bluetooth. iOS users
+  reach the ears through the phone app instead (§12.5).
 - **Retiring the built-in `0x01` animations.** A firmware intention, tracked on the Robo Cat Ears
   board; the watch grid is already designed to survive it.
 - **Syncing device state back to the web app's database.**

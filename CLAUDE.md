@@ -4,8 +4,9 @@ ESP-IDF v5.5.2 firmware for the robo cat ears, written in C and built for the **
 application code lives in `main/` (one `.c`/`.h` pair per module, shared wire structs in
 `main/types/`); `test/` holds host tests that build with plain `gcc` and no hardware.
 
-The ears are the BLE peripheral and GATT server. Two clients talk to them: the `robo-cat-ears-watch`
-firmware (play-only) and the `milk-lab-creations` SvelteKit web app (the authoring tool).
+The ears are the BLE peripheral and GATT server. Three clients talk to them: the `robo-cat-ears-watch`
+firmware (play-only), the `milk-lab-creations` SvelteKit web app (the authoring tool), and the
+`robo-cat-ears-app` Flutter phone app (play-only).
 
 ## Development
 
@@ -32,9 +33,9 @@ ran `make`.
 
 ## The BLE protocol is the contract
 
-`docs/ble-protocol.md` is the wire contract between this repo, `robo-cat-ears-watch` and
-`milk-lab-creations`, and **this repo is its owner of record**. A change to the bytes on the wire is
-a change to that document first and to `main/ble.c` / `main/store.c` second.
+`docs/ble-protocol.md` is the wire contract between this repo, `robo-cat-ears-watch`,
+`milk-lab-creations` and `robo-cat-ears-app`, and **this repo is its owner of record**. A change to
+the bytes on the wire is a change to that document first and to `main/ble.c` / `main/store.c` second.
 
 Two things fall out of that, and both have already bitten:
 
